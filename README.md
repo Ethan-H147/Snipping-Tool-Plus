@@ -20,6 +20,12 @@ Default shortcuts:
 
 Use the tray menu to open settings and configure shortcuts, capture options, and save folders.
 
+The local runnable app lives directly in this project's main folder as `Snipping Tool+.exe`, alongside its runtime files, `settings.json`, and `regions.json`. To rebuild it there:
+
+```powershell
+dotnet publish .\SnippingToolPlus-investigation\SnippingToolPlus\SnippingToolPlus.csproj -c Release --self-contained false -o .
+```
+
 To update an existing QuietSnip installation, close the old app and place the new build in the same folder, keeping `settings.json` and `regions.json`. Existing shortcuts, save folders, and saved regions are retained. If startup was enabled, save settings once in the new app to update the Windows startup entry. New installations save screenshots to `Pictures\Snipping Tool+` by default.
 
 ## Tests and diagnostics

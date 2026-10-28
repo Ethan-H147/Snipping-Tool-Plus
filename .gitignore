@@ -7,6 +7,12 @@
 *.suo
 
 # Local published builds and investigation evidence
+/Snipping Tool+.exe
+/Snipping Tool+.dll
+/Snipping Tool+.deps.json
+/Snipping Tool+.runtimeconfig.json
+/settings.json
+/regions.json
 QuietSnip-investigation/
 **/portable/
 **/delivery/
