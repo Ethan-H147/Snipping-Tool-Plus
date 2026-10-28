@@ -1,0 +1,31 @@
+# .NET build output and IDE state
+**/bin/
+**/obj/
+.vs/
+.idea/
+*.user
+*.suo
+
+# Local published builds and investigation evidence
+**/portable/
+**/delivery/
+**/evidence/
+**/results/
+**/test-results/
+**/investigation-results/
+**/diagnostics-publish/
+QuietSnip-investigation/*-baseline.json
+QuietSnip-investigation/preservation-verification.json
+QuietSnip-investigation/test-source-before.json
+
+# Local configuration and secrets
+.env
+.env.*
+!.env.example
+*.pfx
+*.p12
+*.key
+
+# OS files
+Thumbs.db
+Desktop.ini
