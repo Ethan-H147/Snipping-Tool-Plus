@@ -7,6 +7,7 @@
 *.suo
 
 # Local published builds and investigation evidence
+QuietSnip-investigation/
 **/portable/
 **/delivery/
 **/evidence/
@@ -14,9 +15,9 @@
 **/test-results/
 **/investigation-results/
 **/diagnostics-publish/
-QuietSnip-investigation/*-baseline.json
-QuietSnip-investigation/preservation-verification.json
-QuietSnip-investigation/test-source-before.json
+SnippingToolPlus-investigation/*-baseline.json
+SnippingToolPlus-investigation/preservation-verification.json
+SnippingToolPlus-investigation/test-source-before.json
 
 # Local configuration and secrets
 .env
