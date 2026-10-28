@@ -28,10 +28,13 @@ Run the core tests with an isolated output directory:
 
 ```powershell
 dotnet run --project .\SnippingToolPlus-investigation\SnippingToolPlus.Tests\SnippingToolPlus.Tests.csproj -c Release -- .\test-results\core --investigation-core
+dotnet run --project .\SnippingToolPlus-investigation\SnippingToolPlus.Tests\SnippingToolPlus.Tests.csproj -c Release -- .\test-results\rapid-capture --rapid-capture
 dotnet build .\SnippingToolPlus-investigation\SnippingToolPlus.Diagnostics\SnippingToolPlus.Diagnostics.csproj -c Release
 ```
 
 The core test mode checks shortcuts, settings, geometry, PNG output, saved regions, placement, and icons without writing to the clipboard. Other test modes can interact with the desktop and clipboard; review their source before running them.
+
+The rapid capture checks open and cancel overlays to verify that an earlier confirmation popup cannot close the next capture. They leave the clipboard and saved settings unchanged.
 
 See the [diagnostics guide](SnippingToolPlus-investigation/SnippingToolPlus.Diagnostics/README.md) and [investigation notes](SnippingToolPlus-investigation/INVESTIGATION.md) for the capture and HDR investigation. HDR behavior remains under investigation.
 

@@ -34,6 +34,12 @@ internal static class Program
                 Run("Actual overlay menu and 100 cancel cycles", TestOverlayBaseline);
                 return 0;
             }
+            if (args.Contains("--rapid-capture"))
+            {
+                Run("Second capture survives the previous confirmation timeout", TestRapidCapture);
+                Run("Rapid captures dismiss old notices and stay open until cancelled", TestRapidCaptureThroughTray);
+                return 0;
+            }
             if (args.Contains("--ui-only"))
             {
                 Run("Shortcut row action buttons", TestActionButtons);
@@ -61,6 +67,8 @@ internal static class Program
             Run("Optional shortcut registration and collision rollback", TestOptionalHotkeys);
             Run("Save closes settings on success; errors keep it open", TestSaveAndClose);
             Run("Capture confirmation is near the selection and dismisses itself", TestConfirmation);
+            Run("Second capture survives the previous confirmation timeout", TestRapidCapture);
+            Run("Rapid captures dismiss old notices and stay open until cancelled", TestRapidCaptureThroughTray);
             Run("Shortcut row buttons run each action independently of hotkey enablement", TestActionButtons);
             Run("Tray/taskbar icon contains native sizes and smooth alpha edges", TestIcons);
             Run("Settings layout at the desktop's display scale", TestLayout);
@@ -480,6 +488,72 @@ internal static class Program
         owner.Close();
     }
     [System.Runtime.InteropServices.DllImport("user32.dll")] private static extern IntPtr GetForegroundWindow();
+
+    private static void TestRapidCapture()
+    {
+        Rectangle bounds = SystemInformation.VirtualScreen;
+        using var desktop = new Bitmap(bounds.Width, bounds.Height);
+        using var owner = new HotkeyWindow("SnippingToolPlus.Tests.RapidCapture");
+        using var notice = new CaptureNotice("Copied", new Rectangle(bounds.Left + 100, bounds.Top + 100, 300, 200));
+        notice.Show();
+        Application.DoEvents();
+        using var overlay = new SelectionOverlay(desktop, bounds, CaptureMode.Copy);
+        using var cancel = new System.Windows.Forms.Timer { Interval = 1300 };
+        cancel.Tick += (_, _) => { cancel.Stop(); OverlayEvent(overlay, "OnKeyDown", new KeyEventArgs(Keys.Escape)); };
+        overlay.Shown += (_, _) => cancel.Start();
+        var elapsed = System.Diagnostics.Stopwatch.StartNew();
+        DialogResult result = overlay.ShowDialog(owner);
+        Assert(elapsed.ElapsedMilliseconds >= 1100,
+            $"Second overlay closed after {elapsed.ElapsedMilliseconds}ms when the previous confirmation expired");
+        Assert(result == DialogResult.Cancel, "Explicit cancellation did not close the second overlay");
+    }
+
+    private static void TestRapidCaptureThroughTray()
+    {
+        const System.Reflection.BindingFlags flags = System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic;
+        var confirm = typeof(TrayApplication).GetMethod("Confirm", flags)!;
+        var execute = typeof(TrayApplication).GetMethod("Execute", flags)!;
+        var busy = typeof(TrayApplication).GetField("busy", flags)!;
+        using var app = new TrayApplication("SnippingToolPlus.Tests.RapidCapture." + Guid.NewGuid().ToString("N"));
+        for (int cycle = 0; cycle < 3; cycle++)
+        {
+            confirm.Invoke(app, [cycle % 2 == 0 ? "Copied" : "Saved + copied"]);
+            var notice = Application.OpenForms.OfType<CaptureNotice>().Single();
+            bool noticeDismissed = false;
+            SelectionOverlay? active = null;
+            long shownAt = 0, closedAt = 0;
+            var elapsed = System.Diagnostics.Stopwatch.StartNew();
+            using var watchdog = new System.Windows.Forms.Timer { Interval = 25 };
+            watchdog.Tick += (_, _) =>
+            {
+                var overlay = Application.OpenForms.OfType<SelectionOverlay>().FirstOrDefault();
+                if (active == null && overlay != null)
+                {
+                    active = overlay; shownAt = elapsed.ElapsedMilliseconds;
+                    noticeDismissed = notice.IsDisposed || !notice.Visible;
+                    overlay.FormClosed += (_, _) => closedAt = elapsed.ElapsedMilliseconds;
+                }
+                if (active is { IsDisposed: false, Visible: true } && elapsed.ElapsedMilliseconds - shownAt >= 1300)
+                    OverlayEvent(active, "OnKeyDown", new KeyEventArgs(Keys.Escape));
+            };
+            watchdog.Start();
+            execute.Invoke(app, [AppAction.CopySnip]);
+            try
+            {
+                while ((bool)busy.GetValue(app)! && elapsed.ElapsedMilliseconds < 5000)
+                { Application.DoEvents(); Thread.Sleep(5); }
+                Assert(active != null, "The next capture did not open");
+                Assert(closedAt - shownAt >= 1100, $"Capture cycle {cycle} closed after {closedAt - shownAt}ms");
+                Assert(noticeDismissed, "The previous confirmation was still visible when the next capture opened");
+                Assert(!(bool)busy.GetValue(app)!, "Cancelling left the app busy");
+            }
+            finally
+            {
+                watchdog.Stop();
+                if (active is { IsDisposed: false }) OverlayEvent(active, "OnKeyDown", new KeyEventArgs(Keys.Escape));
+            }
+        }
+    }
 
     private static void TestOverlayBaseline()
     {

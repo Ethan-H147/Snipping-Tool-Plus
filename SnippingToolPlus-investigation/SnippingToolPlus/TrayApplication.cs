@@ -13,6 +13,7 @@ internal sealed class TrayApplication : ApplicationContext
     private RegionMemory regions;
     private AppSettings settings;
     private SettingsForm? settingsForm;
+    private CaptureNotice? confirmation;
     private bool busy;
     private string? startupMessage;
     private Rectangle lastSelection = Rectangle.Empty;
@@ -165,6 +166,7 @@ internal sealed class TrayApplication : ApplicationContext
     }
     private async Task Capture(CaptureMode requestedMode, string directory, bool repeat)
     {
+        DismissConfirmation();
         bool restoreSettings = settingsForm is { IsDisposed: false, Visible: true };
         settingsForm?.Hide();
         try
@@ -198,7 +200,8 @@ internal sealed class TrayApplication : ApplicationContext
                     initial = new Rectangle(rectangle.X - desktopBounds.X, rectangle.Y - desktopBounds.Y, rectangle.Width, rectangle.Height);
                 }
                 using var overlay = new SelectionOverlay(desktop, desktopBounds, mode, settings.Shape, settings, initial);
-                if (overlay.ShowDialog() != DialogResult.OK) return;
+                // A timed confirmation must never become the modal overlay's owner.
+                if (overlay.ShowDialog(hotkeys) != DialogResult.OK) return;
                 image = overlay.CreateImage(); mode = overlay.DestinationMode; shape = overlay.Shape; polygon = overlay.Polygon;
                 screenSelection = new Rectangle(overlay.Selection.X + desktopBounds.X, overlay.Selection.Y + desktopBounds.Y, overlay.Selection.Width, overlay.Selection.Height);
             }
@@ -219,21 +222,34 @@ internal sealed class TrayApplication : ApplicationContext
     }
     private void Confirm(string text)
     {
+        DismissConfirmation();
         if (!settings.ShowConfirmation) return;
         Rectangle location = lastSelection.IsEmpty ? new Rectangle(Cursor.Position, new Size(1, 1)) : lastSelection;
         var notice = new CaptureNotice(text, location);
-        notice.FormClosed += (_, _) => notice.Dispose(); notice.Show();
+        confirmation = notice;
+        notice.FormClosed += (_, _) =>
+        {
+            if (ReferenceEquals(confirmation, notice)) confirmation = null;
+            notice.Dispose();
+        };
+        notice.Show();
+    }
+    private void DismissConfirmation()
+    {
+        var notice = confirmation;
+        confirmation = null;
+        notice?.Close();
     }
     private void OpenSaveFolder()
     {
         try { Directory.CreateDirectory(settings.SaveFolder); Process.Start(new ProcessStartInfo(settings.SaveFolder) { UseShellExecute = true }); }
         catch (Exception exception) { MessageBox.Show(exception.Message, "Snipping Tool+"); }
     }
-    protected override void ExitThreadCore() { tray.Visible = false; settingsForm?.Close(); base.ExitThreadCore(); }
+    protected override void ExitThreadCore() { DismissConfirmation(); tray.Visible = false; settingsForm?.Close(); base.ExitThreadCore(); }
     protected override void Dispose(bool disposing)
     {
         if (disposing)
-        { Application.Idle -= FirstIdle; settingsForm?.Dispose(); tray.Visible = false; tray.Dispose(); trayIcon.Dispose(); menu.Dispose(); hotkeys.Dispose(); memory.Dispose(); }
+        { Application.Idle -= FirstIdle; DismissConfirmation(); settingsForm?.Dispose(); tray.Visible = false; tray.Dispose(); trayIcon.Dispose(); menu.Dispose(); hotkeys.Dispose(); memory.Dispose(); }
         base.Dispose(disposing);
     }
 }
