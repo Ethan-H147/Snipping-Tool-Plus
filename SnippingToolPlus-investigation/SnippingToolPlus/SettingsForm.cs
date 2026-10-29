@@ -77,6 +77,7 @@ internal sealed class SettingsForm : Form
         LabelAt(capture, "Hold Alt when completing a capture to switch copy / save.", 4, 350, 596, 40, false, true);
 
         var shortcuts = pages[1];
+        shortcuts.AutoScroll = true;
         int row = 0;
         foreach (AppAction action in Enum.GetValues<AppAction>())
         {
@@ -99,7 +100,7 @@ internal sealed class SettingsForm : Form
                 if (action is AppAction.CopyAsFile or AppAction.CopyPath)
                     tips.SetToolTip(enabledBox, "Saves the last capture to your normal folder first, if it hasn't been saved.");
             }
-            var frame = new FieldFrame { Bounds = new Rectangle(274, y + 4, 226, 38), Tag = "field" };
+            var frame = new FieldFrame { Bounds = new Rectangle(258, y + 4, 226, 38), Tag = "field" };
             var input = new HotkeyBox(value) { Bounds = new Rectangle(6, 9, 214, 24), Enabled = enabled,
                 AccessibleName = ActionNames.Label(action) + " shortcut" };
             hotkeyBoxes[action] = input;
@@ -107,13 +108,13 @@ internal sealed class SettingsForm : Form
             input.ValueChanged += Changed;
             tips.SetToolTip(input, "Click, then press Ctrl or Alt with your chosen key. Changes apply when you save.");
             var run = new ActionButton { Text = ActionNames.ButtonLabel(action),
-                Bounds = new Rectangle(510, y + 4, 90, 38), AccessibleName = "Run " + ActionNames.Label(action), Tag = action };
+                Bounds = new Rectangle(494, y + 4, 90, 38), AccessibleName = "Run " + ActionNames.Label(action), Tag = action };
             run.Click += (_, _) => RunAction(action);
             actionButtons[action] = run;
             shortcuts.Controls.Add(run);
             Divider(shortcuts, y + 48);
         }
-        shortcuts.AutoScroll = false;
+        shortcuts.AutoScrollMinSize = new Size(0, row * 49 + 4);
 
         var folders = pages[2];
         LabelAt(folders, "Screenshot folder", 4, 4, 590, 30, true);
@@ -142,7 +143,7 @@ internal sealed class SettingsForm : Form
             ForeColor = muted ? Theme.Muted : Theme.Ink, BackColor = Color.Transparent, Tag = muted ? "muted" : null };
         parent.Controls.Add(label); return label;
     }
-    private void Divider(Control parent, int y) => parent.Controls.Add(new Panel { Bounds = new Rectangle(4, y, 600, 1), BackColor = Theme.Border, Tag = "divider" });
+    private void Divider(Control parent, int y) => parent.Controls.Add(new Panel { Bounds = new Rectangle(4, y, 580, 1), BackColor = Theme.Border, Tag = "divider" });
     private CheckBox Check(Control parent, string text, int x, int y, bool value)
     {
         var check = new CheckBox { Text = text, Location = new Point(x, y), AutoSize = true, Checked = value, ForeColor = Theme.Ink };

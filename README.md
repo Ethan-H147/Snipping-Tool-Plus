@@ -6,7 +6,7 @@ The app and executable are named **Snipping Tool+**. Source projects use `Snippi
 
 ## Build and run
 
-Requires Windows and the .NET 10 SDK with Windows Desktop support.
+Requires Windows 10 version 2004 or later and the .NET 10 SDK with Windows Desktop support. The published app requires the .NET 10 Desktop Runtime.
 
 ```powershell
 dotnet build .\SnippingToolPlus-investigation\SnippingToolPlus\SnippingToolPlus.csproj -c Release
@@ -28,6 +28,16 @@ dotnet publish .\SnippingToolPlus-investigation\SnippingToolPlus\SnippingToolPlu
 
 To update an existing QuietSnip installation, close the old app and place the new build in the same folder, keeping `settings.json` and `regions.json`. Existing shortcuts, save folders, and saved regions are retained. If startup was enabled, save settings once in the new app to update the Windows startup entry. New installations save screenshots to `Pictures\Snipping Tool+` by default.
 
+## Text recognition
+
+Start your normal snip, click **Text** in the capture toolbar, and select a region. You can also use **Extract text from screen** in the tray menu, or **Text actions for last snip** to read a capture you already took. Optional shortcuts for both actions are available under Settings → Shortcuts.
+
+The text actions window highlights recognized words. Drag across words to select them, use **Copy selected** or **Copy all text**, or edit the extracted text in the panel on the right. **Remove line breaks** flattens copied text without changing the editable result. Ctrl+A and Ctrl+C work in the preview, and the text editor supports normal text selection. **New region** starts another text capture; Escape closes the window.
+
+Recognition uses Windows OCR locally, with an installed recognition language matching your Windows preferences where available. It sends no images to a server. Text mode does not save a PNG or replace the clipboard until you choose a copy action. Accuracy depends on text size, contrast, language, and image quality. Missing recognition languages can be added in Windows Settings → Time & language → Language & region.
+
+Word highlights ease in over 160 ms and respect Windows' animation setting. Capture shortcuts and toolbar changes remain immediate.
+
 ## Tests and diagnostics
 
 Run the core tests with an isolated output directory:
@@ -35,6 +45,8 @@ Run the core tests with an isolated output directory:
 ```powershell
 dotnet run --project .\SnippingToolPlus-investigation\SnippingToolPlus.Tests\SnippingToolPlus.Tests.csproj -c Release -- .\test-results\core --investigation-core
 dotnet run --project .\SnippingToolPlus-investigation\SnippingToolPlus.Tests\SnippingToolPlus.Tests.csproj -c Release -- .\test-results\rapid-capture --rapid-capture
+dotnet run --project .\SnippingToolPlus-investigation\SnippingToolPlus.Tests\SnippingToolPlus.Tests.csproj -c Release -- .\test-results\ocr --ocr-tests
+dotnet run --project .\SnippingToolPlus-investigation\SnippingToolPlus.Tests\SnippingToolPlus.Tests.csproj -c Release -- .\test-results\ocr-ui --ocr-ui
 dotnet build .\SnippingToolPlus-investigation\SnippingToolPlus.Diagnostics\SnippingToolPlus.Diagnostics.csproj -c Release
 ```
 

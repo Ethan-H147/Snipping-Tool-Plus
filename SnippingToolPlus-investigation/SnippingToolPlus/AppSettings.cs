@@ -29,7 +29,7 @@ internal readonly record struct Hotkey(Keys Key, HotkeyModifiers Modifiers)
 }
 
 internal enum CaptureShape { Rectangle, Freeform, FullScreen }
-internal enum AppAction { CopySnip, SaveSnip, SaveLast, RepeatRegion, CopyAsFile, RevealLast, CopyPath, SaveProject }
+internal enum AppAction { CopySnip, SaveSnip, SaveLast, RepeatRegion, CopyAsFile, RevealLast, CopyPath, SaveProject, ExtractText, TextActions }
 
 internal sealed record AppSettings
 {

@@ -10,7 +10,7 @@ internal static class ActionNames
         AppAction.CopySnip or AppAction.SaveSnip or AppAction.SaveProject => "Capture",
         AppAction.SaveLast => "Save", AppAction.RepeatRegion => "Repeat",
         AppAction.CopyAsFile => "Copy file", AppAction.RevealLast => "Show",
-        AppAction.CopyPath => "Copy path", _ => "Run"
+        AppAction.CopyPath => "Copy path", AppAction.ExtractText => "Capture", AppAction.TextActions => "Open", _ => "Run"
     };
     public static string Label(AppAction action) => action switch
     {
@@ -18,6 +18,7 @@ internal static class ActionNames
         AppAction.SaveLast => "Save last capture", AppAction.RepeatRegion => "Repeat last region",
         AppAction.CopyAsFile => "Copy last as file", AppAction.RevealLast => "Reveal last saved file",
         AppAction.CopyPath => "Copy last file path", AppAction.SaveProject => "Save to project folder",
+        AppAction.ExtractText => "Extract text from screen", AppAction.TextActions => "Text actions for last snip",
         _ => action.ToString()
     };
 }

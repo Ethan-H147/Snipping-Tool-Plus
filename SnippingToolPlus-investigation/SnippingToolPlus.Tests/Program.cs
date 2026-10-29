@@ -17,6 +17,22 @@ internal static class Program
         Directory.CreateDirectory(root);
         try
         {
+            if (args.Contains("--ocr-ui"))
+            {
+                Run("OCR word selection, editable copy text, light/dark UI, and close during recognition", TestTextActionsUi);
+                Run("Text toolbar mode and region selection", TestTextCaptureMode);
+                Run("Text capture and last-snip actions leave files and clipboard untouched", TestTextCaptureThroughTray);
+                Run("Shortcut actions and scrolling layout", TestActionButtons);
+                Run("Light/dark settings and capture toolbar layout", TestLayout);
+                return 0;
+            }
+            if (args.Contains("--ocr-tests"))
+            {
+                Run("Windows OCR recognizes text and maps original word positions", TestRecognition);
+                Run("OCR scaling, selected text, and line break formatting", TestRecognitionFormatting);
+                Run("OCR cancellation does not retain source images", TestRecognitionCancellation);
+                return 0;
+            }
             if (args.Contains("--investigation-core"))
             {
                 Run("Shortcut validation and formatting", TestShortcuts);
@@ -94,6 +110,191 @@ internal static class Program
     {
         try { action(); } catch (T) { return; }
         throw new Exception("Expected " + typeof(T).Name);
+    }
+
+
+    private static T Pump<T>(Task<T> task)
+    {
+        var deadline = DateTime.UtcNow.AddSeconds(30);
+        while (!task.IsCompleted && DateTime.UtcNow < deadline) { Application.DoEvents(); Thread.Sleep(5); }
+        Assert(task.IsCompleted, "The asynchronous operation did not finish");
+        return task.GetAwaiter().GetResult();
+    }
+
+    private static void TestRecognition()
+    {
+        Task<TextRecognitionResult> pending;
+        using (var image = new Bitmap(1024, 300))
+        using (var graphics = Graphics.FromImage(image))
+        using (var font = new Font("Segoe UI", 32))
+        {
+            graphics.Clear(Color.White);
+            graphics.DrawString("SNIPPING TOOL PLUS", font, Brushes.Black, 32, 30);
+            graphics.DrawString("Read text 12345", font, Brushes.Black, 32, 130);
+            image.Save(Path.Combine(root, "ocr-fixture.png"), ImageFormat.Png);
+            pending = TextRecognition.RecognizeAsync(image);
+        }
+        var result = Pump(pending);
+        Assert(result.Text.Contains("SNIPPING TOOL PLUS", StringComparison.OrdinalIgnoreCase), "Headline not recognized: " + result.Text);
+        Assert(result.Text.Contains("12345"), "Digits not recognized: " + result.Text);
+        Assert(result.Words.Count >= 6, "Word boxes missing");
+        Assert(result.Words.All(word => word.Bounds.Width > 0 && word.Bounds.Height > 0
+            && word.Bounds.Left >= 0 && word.Bounds.Top >= 0 && word.Bounds.Right <= 1025 && word.Bounds.Bottom <= 301), "Word bounds were not mapped to original pixels");
+        Console.WriteLine("  Windows OCR language: " + result.Language);
+        using var blank = new Bitmap(200, 100);
+        using (var graphics = Graphics.FromImage(blank)) graphics.Clear(Color.White);
+        Assert(Pump(TextRecognition.RecognizeAsync(blank)).Words.Count == 0, "Blank image produced text");
+    }
+
+    private static void TestRecognitionFormatting()
+    {
+        Assert(TextRecognition.RecognitionSize(new Size(6000, 3000), 2600) == new Size(2600, 1300), "Large image scaling exceeded the engine limit");
+        Assert(TextRecognition.RecognitionSize(new Size(100, 50), 2600) == new Size(200, 100), "Small text was not upscaled");
+        Assert(TextRecognition.RecognitionSize(new Size(1, 6000), 2600).Width == 1, "Thin image collapsed");
+        Assert(TextRecognitionResult.WithoutLineBreaks("First\r\n  second\nthird") == "First second third", "Line break removal failed");
+        var result = new TextRecognitionResult("One two\nThree", [
+            new("One", new RectangleF(1, 1, 10, 10), 0),
+            new("two", new RectangleF(12, 1, 10, 10), 0),
+            new("Three", new RectangleF(1, 14, 10, 10), 1)], "English");
+        Assert(result.SelectedText([2, 0, 0, 1]) == "One two" + Environment.NewLine + "Three", "Selection order or line grouping was lost");
+    }
+
+    private static void TestRecognitionCancellation()
+    {
+        using var image = new Bitmap(50, 50);
+        using var cancellation = new CancellationTokenSource();
+        cancellation.Cancel();
+        Throws<OperationCanceledException>(() => Pump(TextRecognition.RecognizeAsync(image, cancellation.Token)));
+    }
+
+
+    private static void CanvasEvent(TextRecognitionCanvas canvas, string method, MouseEventArgs args) =>
+        typeof(TextRecognitionCanvas).GetMethod(method, System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!
+            .Invoke(canvas, [args]);
+
+    private static void TestTextActionsUi()
+    {
+        using var image = new Bitmap(1024, 300);
+        using (var graphics = Graphics.FromImage(image))
+        using (var font = new Font("Segoe UI", 32))
+        {
+            graphics.Clear(Color.White);
+            graphics.DrawString("SNIPPING TOOL PLUS", font, Brushes.Black, 32, 30);
+            graphics.DrawString("Read text 12345", font, Brushes.Black, 32, 130);
+        }
+        var recognized = Pump(TextRecognition.RecognizeAsync(image));
+        foreach (bool dark in new[] { false, true })
+        {
+            Theme.TestDark = dark;
+            using var form = new TextActionsForm(image, recognized);
+            form.Show(); Application.DoEvents();
+            Assert(form.Editor.Text.Contains("12345"), "Recognized text did not reach the editor");
+            foreach (var control in Descendants(form).Where(c => c is ActionButton || c is Label))
+                Assert(control.Parent!.ClientRectangle.Contains(control.Bounds), "Clipped OCR control: " + control.Text + " " + control.Bounds + " parent " + control.Parent.ClientSize);
+            var first = form.Preview.WordBounds(0);
+            var second = form.Preview.WordBounds(1);
+            var start = Point.Round(new PointF(first.Left + first.Width / 2, first.Top + first.Height / 2));
+            var end = Point.Round(new PointF(second.Left + second.Width / 2, second.Top + second.Height / 2));
+            CanvasEvent(form.Preview, "OnMouseDown", new MouseEventArgs(MouseButtons.Left, 1, start.X, start.Y, 0));
+            CanvasEvent(form.Preview, "OnMouseMove", new MouseEventArgs(MouseButtons.Left, 0, end.X, end.Y, 0));
+            CanvasEvent(form.Preview, "OnMouseUp", new MouseEventArgs(MouseButtons.Left, 1, end.X, end.Y, 0));
+            Assert(form.Preview.SelectedIndices.Count == 2, "Dragging did not select the first two words");
+            Assert(form.CopyText(true) == recognized.SelectedText([0, 1]), "Selected image words did not reach the copy action");
+            form.Editor.Select(0, 3);
+            Assert(form.CopyText(true) == form.Editor.SelectedText, "Editable text selection was ignored");
+            Descendants(form).OfType<CheckBox>().Single(c => c.Text == "Remove line breaks").Checked = true;
+            Assert(!form.CopyText(false).Contains('\n') && !form.CopyText(false).Contains('\r'), "Copy all did not flatten line breaks");
+            DateTime deadline = DateTime.UtcNow.AddMilliseconds(200);
+            while (DateTime.UtcNow < deadline) { Application.DoEvents(); Thread.Sleep(5); }
+            using var rendered = new Bitmap(form.Width, form.Height);
+            form.DrawToBitmap(rendered, new Rectangle(Point.Empty, rendered.Size));
+            rendered.Save(Path.Combine(root, dark ? "text-actions-dark.png" : "text-actions-light.png"), ImageFormat.Png);
+            form.Close(); form.Dispose();
+        }
+        Theme.TestDark = null;
+        using var empty = new TextActionsForm(image, new TextRecognitionResult("", [], "English"));
+        empty.Show(); Application.DoEvents();
+        Assert(!Descendants(empty).OfType<ActionButton>().Any(b => b.Text.StartsWith("Copy") && b.Enabled), "Empty OCR result enabled copying");
+        empty.Close();
+        using var cancelled = new TextActionsForm(image);
+        cancelled.Show(); cancelled.Close();
+        for (int i = 0; i < 30; i++) { Application.DoEvents(); Thread.Sleep(5); }
+    }
+
+    private static void TestTextCaptureMode()
+    {
+        Rectangle bounds = SystemInformation.VirtualScreen;
+        using var desktop = new Bitmap(bounds.Width, bounds.Height);
+        using var overlay = new SelectionOverlay(desktop, bounds, CaptureMode.Copy);
+        var textButton = overlay.ModeButtonBounds(2);
+        OverlayEvent(overlay, "OnMouseDown", new MouseEventArgs(MouseButtons.Left, 1, textButton.Left + 5, textButton.Top + 5, 0));
+        Assert(overlay.Selection.IsEmpty && overlay.DestinationMode == CaptureMode.Text, "Text mode click began a capture or kept the old mode");
+        OverlayEvent(overlay, "OnMouseDown", new MouseEventArgs(MouseButtons.Left, 1, 100, 200, 0));
+        OverlayEvent(overlay, "OnMouseMove", new MouseEventArgs(MouseButtons.Left, 0, 400, 400, 0));
+        OverlayEvent(overlay, "OnMouseUp", new MouseEventArgs(MouseButtons.Left, 1, 400, 400, 0));
+        Assert(overlay.DestinationMode == CaptureMode.Text && overlay.DialogResult == DialogResult.OK, "Region completion lost text mode");
+        Assert(SelectionOverlay.ResolveMode(CaptureMode.Text, true) == CaptureMode.Text, "Holding Alt changed OCR into image copying");
+        using var image = overlay.CreateImage();
+        Assert(image.Size == new Size(300, 200), "Text capture has incorrect region dimensions");
+        overlay.Show(); Application.DoEvents();
+        using var rendered = new Bitmap(overlay.Width, overlay.Height);
+        overlay.DrawToBitmap(rendered, new Rectangle(Point.Empty, rendered.Size));
+        using var toolbar = rendered.Clone(Rectangle.Inflate(overlay.ModeToolbarBounds, 12, 12), PixelFormat.Format32bppArgb);
+        toolbar.Save(Path.Combine(root, "capture-toolbar-text.png"), ImageFormat.Png);
+        overlay.Close();
+    }
+
+
+    [System.Runtime.InteropServices.DllImport("user32.dll")] private static extern uint GetClipboardSequenceNumber();
+
+    private static void TestTextCaptureThroughTray()
+    {
+        const System.Reflection.BindingFlags flags = System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic;
+        var execute = typeof(TrayApplication).GetMethod("Execute", flags)!;
+        var busy = typeof(TrayApplication).GetField("busy", flags)!;
+        string destination = Path.Combine(root, "ocr-must-not-save-" + Guid.NewGuid().ToString("N"));
+        uint clipboardBefore = GetClipboardSequenceNumber();
+        using var app = new TrayApplication("SnippingToolPlus.Tests.Ocr." + Guid.NewGuid().ToString("N"));
+        typeof(TrayApplication).GetField("settings", flags)!.SetValue(app, new AppSettings { SaveFolder = destination });
+        bool selected = false, opened = false;
+        using var driver = new System.Windows.Forms.Timer { Interval = 25 };
+        driver.Tick += (_, _) =>
+        {
+            var overlay = Application.OpenForms.OfType<SelectionOverlay>().FirstOrDefault();
+            if (!selected && overlay is { Visible: true })
+            {
+                selected = true;
+                OverlayEvent(overlay, "OnMouseDown", new MouseEventArgs(MouseButtons.Left, 1, 100, 300, 0));
+                OverlayEvent(overlay, "OnMouseMove", new MouseEventArgs(MouseButtons.Left, 0, 420, 500, 0));
+                OverlayEvent(overlay, "OnMouseUp", new MouseEventArgs(MouseButtons.Left, 1, 420, 500, 0));
+            }
+        };
+        driver.Start();
+        try
+        {
+            execute.Invoke(app, [AppAction.ExtractText]);
+            DateTime deadline = DateTime.UtcNow.AddSeconds(5);
+            while (DateTime.UtcNow < deadline)
+            {
+                Application.DoEvents();
+                if (Application.OpenForms.OfType<TextActionsForm>().Any()) { opened = true; break; }
+                Thread.Sleep(5);
+            }
+            Assert(selected && opened, "Text capture did not open the text actions UI");
+            Assert(!(bool)busy.GetValue(app)!, "Text recognition left capture shortcuts blocked");
+            Assert(!Directory.Exists(destination), "Text mode saved an unwanted screenshot");
+            Assert(GetClipboardSequenceNumber() == clipboardBefore, "Text mode changed the clipboard before Copy was requested");
+            var window = Application.OpenForms.OfType<TextActionsForm>().Single();
+            window.Close();
+            execute.Invoke(app, [AppAction.TextActions]);
+            Assert(Application.OpenForms.OfType<TextActionsForm>().Any(), "Last-capture text actions did not reopen");
+        }
+        finally
+        {
+            driver.Stop();
+            foreach (var window in Application.OpenForms.OfType<TextActionsForm>().ToArray()) window.Close();
+            foreach (var overlay in Application.OpenForms.OfType<SelectionOverlay>().ToArray()) overlay.Close();
+        }
     }
 
     private static void TestShortcuts()
@@ -437,6 +638,16 @@ internal static class Program
             pair.Value.PerformClick();
         }
         Assert(called.SequenceEqual(Enum.GetValues<AppAction>()), "Buttons did not dispatch the corresponding actions");
+        var lastAction = form.ActionButtons[AppAction.TextActions];
+        var scroll = (Panel)lastAction.Parent!;
+        scroll.ScrollControlIntoView(lastAction); Application.DoEvents();
+        Assert(scroll.ClientRectangle.Contains(lastAction.Bounds), "The last text action is clipped after scrolling");
+        Assert(!scroll.HorizontalScroll.Visible, "Shortcut actions require horizontal scrolling");
+        using (var rendered = new Bitmap(form.Width, form.Height))
+        {
+            form.DrawToBitmap(rendered, new Rectangle(Point.Empty, rendered.Size));
+            rendered.Save(Path.Combine(root, "settings-text-shortcuts.png"), ImageFormat.Png);
+        }
         foreach (var input in Descendants(form).OfType<HotkeyBox>().Where(input => input.AccessibleName != "Copy to clipboard shortcut" && input.AccessibleName != "Save + copy shortcut"))
             Assert(!input.Enabled, "Running an action enabled its global hotkey");
         form.Close();

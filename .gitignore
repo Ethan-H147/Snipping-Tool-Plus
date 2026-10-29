@@ -9,6 +9,8 @@
 # Local published builds and investigation evidence
 /Snipping Tool+.exe
 /Snipping Tool+.dll
+/Microsoft.Windows.SDK.NET.dll
+/WinRT.Runtime.dll
 /Snipping Tool+.deps.json
 /Snipping Tool+.runtimeconfig.json
 /settings.json

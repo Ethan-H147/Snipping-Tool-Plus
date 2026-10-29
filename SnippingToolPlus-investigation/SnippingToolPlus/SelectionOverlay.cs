@@ -5,7 +5,7 @@ namespace SnippingToolPlus;
 internal sealed class SelectionOverlay : Form
 {
     private readonly Bitmap desktop;
-    private readonly CaptureMode mode;
+    private CaptureMode mode;
     private readonly AppSettings preferences;
     private Point anchor;
     private Point pointer;
@@ -39,7 +39,7 @@ internal sealed class SelectionOverlay : Form
         KeyPreview = true;
         DoubleBuffered = true;
         Cursor = Cursors.Cross;
-        Text = mode == CaptureMode.Copy ? "Snipping Tool+ — Copy snip" : "Snipping Tool+ — Save snip";
+        Text = mode switch { CaptureMode.Text => "Snipping Tool+ — Extract text", CaptureMode.Copy => "Snipping Tool+ — Copy snip", _ => "Snipping Tool+ — Save snip" };
         AccessibleName = Text;
         Rectangle screen = Screen.FromPoint(Cursor.Position).Bounds;
         fullScreen = new Rectangle(screen.X - bounds.X, screen.Y - bounds.Y, screen.Width, screen.Height);
@@ -102,10 +102,53 @@ internal sealed class SelectionOverlay : Form
             e.Graphics.DrawLine(cross, pointer.X - 14, pointer.Y, pointer.X + 14, pointer.Y);
             e.Graphics.DrawLine(cross, pointer.X, pointer.Y - 14, pointer.X, pointer.Y + 14);
         }
-        string hint = EffectiveMode() == CaptureMode.Copy ? "COPY SNIP" : "SAVE + COPY";
-        var measured = TextRenderer.MeasureText(hint, Font);
-        DrawPill(e.Graphics, hint, fullScreen.X + (fullScreen.Width - measured.Width - 28) / 2, fullScreen.Y + 28);
+
+        Rectangle toolbar = ModeToolbarBounds;
+        CaptureChrome.DrawSurface(e.Graphics, toolbar, Math.Max(1, (int)(10 * DeviceDpi / 96f)), Theme.Surface, Theme.Border);
+        string[] modes = ["Copy", "Save + copy", "Text"];
+        int activeMode = (int)EffectiveMode();
+        for (int index = 0; index < modes.Length; index++)
+        {
+            var button = ModeButtonBounds(index);
+            if (activeMode == index || button.Contains(pointer))
+                CaptureChrome.DrawSurface(e.Graphics, button, Math.Max(1, (int)(7 * DeviceDpi / 96f)),
+                    activeMode == index ? CaptureChrome.Selected : CaptureChrome.Hover);
+            TextRenderer.DrawText(e.Graphics, modes[index], Font, button,
+                activeMode == index ? Theme.Accent : Theme.Ink,
+                TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPadding);
+        }
         shapePicker.PaintOn(e.Graphics, shapePicker.Location, shapePicker.Bounds.Contains(pointer));
+    }
+
+
+    internal Rectangle ModeToolbarBounds
+    {
+        get
+        {
+            float scale = DeviceDpi / 96f;
+            int width = (int)(342 * scale);
+            return new Rectangle(fullScreen.X + (fullScreen.Width - width) / 2,
+                fullScreen.Y + (int)(20 * scale), width, (int)(42 * scale));
+        }
+    }
+    internal Rectangle ModeButtonBounds(int index)
+    {
+        Rectangle bar = ModeToolbarBounds;
+        int inset = Math.Max(2, (int)(4 * DeviceDpi / 96f));
+        int width = (bar.Width - 2 * inset) / 3;
+        return new Rectangle(bar.X + inset + index * width, bar.Y + inset, width, bar.Height - 2 * inset);
+    }
+    private void SetMode(CaptureMode value)
+    {
+        mode = DestinationMode = value;
+        Text = value switch
+        {
+            CaptureMode.Text => "Snipping Tool+ — Extract text",
+            CaptureMode.Save => "Snipping Tool+ — Save snip",
+            _ => "Snipping Tool+ — Copy snip"
+        };
+        AccessibleName = Text;
+        Invalidate();
     }
 
     private void DrawPill(Graphics graphics, string text, int x, int y)
@@ -126,6 +169,12 @@ internal sealed class SelectionOverlay : Form
         base.OnMouseDown(e);
         if (e.Button == MouseButtons.Right) { DialogResult = DialogResult.Cancel; return; }
         if (e.Button != MouseButtons.Left) return;
+        if (ModeToolbarBounds.Contains(e.Location))
+        {
+            for (int index = 0; index < 3; index++)
+                if (ModeButtonBounds(index).Contains(e.Location)) { SetMode((CaptureMode)index); break; }
+            return;
+        }
         if (shapePicker.Bounds.Contains(e.Location))
         {
             shapePicker.OpenMenuAt(this, new Point(shapePicker.Left, shapePicker.Bottom + 6)); Invalidate(); return;
@@ -195,7 +244,7 @@ internal sealed class SelectionOverlay : Form
         if (e.KeyCode == Keys.Space) spaceDown = false;
         Invalidate(); base.OnKeyUp(e);
     }
-    internal static CaptureMode ResolveMode(CaptureMode requested, bool alt) => alt ?
+    internal static CaptureMode ResolveMode(CaptureMode requested, bool alt) => requested == CaptureMode.Text ? requested : alt ?
         (requested == CaptureMode.Copy ? CaptureMode.Save : CaptureMode.Copy) : requested;
     private CaptureMode EffectiveMode() => ResolveMode(mode, ModifierKeys.HasFlag(Keys.Alt));
     private void Complete() { DestinationMode = EffectiveMode(); DialogResult = DialogResult.OK; }

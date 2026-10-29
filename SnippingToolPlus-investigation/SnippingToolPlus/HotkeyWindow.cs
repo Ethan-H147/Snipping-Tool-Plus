@@ -2,7 +2,7 @@ using System.Runtime.InteropServices;
 
 namespace SnippingToolPlus;
 
-internal enum CaptureMode { Copy, Save }
+internal enum CaptureMode { Copy, Save, Text }
 
 internal sealed class HotkeyWindow : NativeWindow, IDisposable
 {

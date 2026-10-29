@@ -14,6 +14,7 @@ internal sealed class TrayApplication : ApplicationContext
     private AppSettings settings;
     private SettingsForm? settingsForm;
     private CaptureNotice? confirmation;
+    private TextActionsForm? textActions;
     private bool busy;
     private string? startupMessage;
     private Rectangle lastSelection = Rectangle.Empty;
@@ -121,6 +122,10 @@ internal sealed class TrayApplication : ApplicationContext
         {
             switch (action)
             {
+                case AppAction.ExtractText: await Capture(CaptureMode.Text, settings.SaveFolder, false); break;
+                case AppAction.TextActions:
+                    if (memory.Image == null) throw new InvalidOperationException("Take a screenshot first.");
+                    ShowTextActions(memory.Image); break;
                 case AppAction.CopySnip: await Capture(CaptureMode.Copy, settings.SaveFolder, false); break;
                 case AppAction.SaveSnip: await Capture(CaptureMode.Save, settings.SaveFolder, false); break;
                 case AppAction.SaveProject:
@@ -150,7 +155,7 @@ internal sealed class TrayApplication : ApplicationContext
     private string? UnavailableReason(AppAction action)
     {
         if (busy) return "Finish the current action first.";
-        if (action is AppAction.SaveLast or AppAction.CopyAsFile or AppAction.CopyPath && memory.Image == null)
+        if (action is AppAction.SaveLast or AppAction.CopyAsFile or AppAction.CopyPath or AppAction.TextActions && memory.Image == null)
             return "Take a screenshot first.";
         if (action == AppAction.RevealLast && (memory.LastSavedPath == null || !File.Exists(memory.LastSavedPath)))
             return "Save a screenshot first.";
@@ -167,6 +172,7 @@ internal sealed class TrayApplication : ApplicationContext
     private async Task Capture(CaptureMode requestedMode, string directory, bool repeat)
     {
         DismissConfirmation();
+        textActions?.Close();
         bool restoreSettings = settingsForm is { IsDisposed: false, Visible: true };
         settingsForm?.Hide();
         try
@@ -209,6 +215,12 @@ internal sealed class TrayApplication : ApplicationContext
             {
                 lastSelection = screenSelection;
                 memory.Replace(image, null);
+                if (mode == CaptureMode.Text)
+                {
+                    restoreSettings = false;
+                    ShowTextActions(image);
+                    return;
+                }
                 var result = await CaptureService.DeliverAsync(image, mode, directory);
                 memory.MarkSaved(result.SavedPath);
                 Screen selectedMonitor = Screen.FromRectangle(screenSelection);
@@ -219,6 +231,16 @@ internal sealed class TrayApplication : ApplicationContext
             }
         }
         finally { if (restoreSettings && settingsForm is { IsDisposed: false }) settingsForm.Show(); }
+    }
+    private void ShowTextActions(Bitmap image)
+    {
+        DismissConfirmation();
+        textActions?.Close();
+        var window = new TextActionsForm(image);
+        textActions = window;
+        window.FormClosed += (_, _) => { if (ReferenceEquals(textActions, window)) textActions = null; };
+        window.NewCaptureRequested += () => Execute(AppAction.ExtractText);
+        window.Show();
     }
     private void Confirm(string text)
     {
@@ -245,11 +267,11 @@ internal sealed class TrayApplication : ApplicationContext
         try { Directory.CreateDirectory(settings.SaveFolder); Process.Start(new ProcessStartInfo(settings.SaveFolder) { UseShellExecute = true }); }
         catch (Exception exception) { MessageBox.Show(exception.Message, "Snipping Tool+"); }
     }
-    protected override void ExitThreadCore() { DismissConfirmation(); tray.Visible = false; settingsForm?.Close(); base.ExitThreadCore(); }
+    protected override void ExitThreadCore() { textActions?.Close(); DismissConfirmation(); tray.Visible = false; settingsForm?.Close(); base.ExitThreadCore(); }
     protected override void Dispose(bool disposing)
     {
         if (disposing)
-        { Application.Idle -= FirstIdle; DismissConfirmation(); settingsForm?.Dispose(); tray.Visible = false; tray.Dispose(); trayIcon.Dispose(); menu.Dispose(); hotkeys.Dispose(); memory.Dispose(); }
+        { Application.Idle -= FirstIdle; textActions?.Dispose(); DismissConfirmation(); settingsForm?.Dispose(); tray.Visible = false; tray.Dispose(); trayIcon.Dispose(); menu.Dispose(); hotkeys.Dispose(); memory.Dispose(); }
         base.Dispose(disposing);
     }
 }
