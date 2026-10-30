@@ -58,11 +58,11 @@ internal sealed class ScreenTextOverlay : Form
         Controls.Add(preview);
 
         toolbar = new FloatingTextToolbar();
-        var back = Button("←", "Select a new region");
-        copyAll = Button("Reading text…", "Copy all text");
+        var back = Button("", "Select a new region", ToolbarGlyph.Back);
+        copyAll = Button("Reading text…", "Copy all text", ToolbarGlyph.Copy);
         copyAll.Enabled = false; copyAll.Name = "CopyAllText";
-        var more = Button("⋯", "More text actions");
-        var close = Button("×", "Close text recognition");
+        var more = Button("", "More text actions", ToolbarGlyph.More);
+        var close = Button("", "Close text recognition", ToolbarGlyph.Close);
         toolbar.Controls.AddRange([back, copyAll, more, close]);
         back.Click += (_, _) => NewRegion();
         copyAll.Click += async (_, _) => await CopyAsync(false);
@@ -93,9 +93,9 @@ internal sealed class ScreenTextOverlay : Form
         LayoutChrome();
     }
 
-    private TextOverlayButton Button(string text, string description)
+    private TextOverlayButton Button(string text, string description, ToolbarGlyph glyph)
     {
-        var button = new TextOverlayButton { Text = text, AccessibleName = description };
+        var button = new TextOverlayButton { Text = text, AccessibleName = description, Glyph = glyph };
         tips.SetToolTip(button, description);
         return button;
     }
@@ -346,6 +346,8 @@ internal sealed class FloatingTextToolbar : Panel
 
 internal sealed class TextOverlayButton : Button
 {
+    [System.ComponentModel.DesignerSerializationVisibility(System.ComponentModel.DesignerSerializationVisibility.Hidden)]
+    internal ToolbarGlyph Glyph { get; init; }
     public TextOverlayButton()
     {
         SetStyle(ControlStyles.SupportsTransparentBackColor | ControlStyles.UserPaint | ControlStyles.OptimizedDoubleBuffer, true);
@@ -359,16 +361,16 @@ internal sealed class TextOverlayButton : Button
         if (hover || Focused)
             CaptureChrome.DrawSurface(e.Graphics, Rectangle.Inflate(ClientRectangle, -1, -1), Math.Max(2, (int)(6 * DeviceDpi / 96f)), CaptureChrome.Hover);
         Rectangle textBounds = ClientRectangle;
-        if (Name == "CopyAllText")
-        {
-            float scale = DeviceDpi / 96f;
-            using var icon = new Pen(Enabled ? Theme.Ink : Theme.Muted, Math.Max(1, scale));
-            e.Graphics.DrawRectangle(icon, 15 * scale, 16 * scale, 9 * scale, 11 * scale);
-            e.Graphics.DrawRectangle(icon, 19 * scale, 12 * scale, 9 * scale, 11 * scale);
-            textBounds.X += (int)(22 * scale); textBounds.Width -= (int)(22 * scale);
-        }
-        TextRenderer.DrawText(e.Graphics, Text, Font, textBounds, Enabled ? Theme.Ink : Theme.Muted,
-            TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPadding);
+        float scale = DeviceDpi / 96f;
+        float iconSize = 20 * scale;
+        var iconBounds = new RectangleF(Glyph == ToolbarGlyph.Copy ? 12 * scale : (Width - iconSize) / 2,
+            (Height - iconSize) / 2, iconSize, iconSize);
+        ToolbarGlyphs.Draw(e.Graphics, Glyph, iconBounds, Enabled ? Theme.Ink : Theme.Muted);
+        if (Glyph == ToolbarGlyph.Copy)
+        { textBounds.X += (int)(26 * scale); textBounds.Width -= (int)(26 * scale); }
+        if (!string.IsNullOrEmpty(Text))
+            TextRenderer.DrawText(e.Graphics, Text, Font, textBounds, Enabled ? Theme.Ink : Theme.Muted,
+                TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPadding);
         if (Focused && ShowFocusCues) ControlPaint.DrawFocusRectangle(e.Graphics, Rectangle.Inflate(ClientRectangle, -4, -4), Theme.Accent, Theme.Surface);
     }
 }

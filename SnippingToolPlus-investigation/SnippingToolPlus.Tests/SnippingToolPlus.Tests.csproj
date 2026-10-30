@@ -7,4 +7,5 @@
     <Nullable>enable</Nullable>
   </PropertyGroup>
   <ItemGroup><ProjectReference Include="../SnippingToolPlus/SnippingToolPlus.csproj" /></ItemGroup>
+  <ItemGroup><None Update="Fixtures\Ocr\*.png" CopyToOutputDirectory="PreserveNewest" /></ItemGroup>
 </Project>

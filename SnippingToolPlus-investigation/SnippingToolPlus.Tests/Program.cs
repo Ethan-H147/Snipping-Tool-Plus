@@ -17,6 +17,13 @@ internal static class Program
         Directory.CreateDirectory(root);
         try
         {
+            if (args.Contains("--ocr-quality"))
+            {
+                Run("Small let's text keeps its apostrophe and genuine O/C letters", TestSmallTextQuality);
+                Run("Icon false positives are removed without damaging real text", TestIconFalsePositives);
+                Run("Custom rounded toolbar glyphs at five display scales", TestRoundedToolbarGlyphs);
+                return 0;
+            }
             if (args.Contains("--ocr-overlay"))
             {
                 Run("On-screen OCR stays aligned, selectable, and open until dismissed", TestScreenTextOverlay);
@@ -444,6 +451,97 @@ internal static class Program
         using var closing = new ScreenTextOverlay(desktop, bounds, new Rectangle(bounds.X + initial.X, bounds.Y + initial.Y, initial.Width, initial.Height));
         closing.Show(); closing.Close(); closing.Dispose();
         for (int i = 0; i < 25; i++) { Application.DoEvents(); Thread.Sleep(5); }
+    }
+
+
+    private static void TestSmallTextQuality()
+    {
+        foreach (bool dark in new[] { false, true })
+        foreach (float points in new[] { 8f, 9f, 10f, 11f })
+        foreach (string contraction in new[] { "Let's", "let's" })
+        {
+            using var image = new Bitmap(720, 80);
+            image.SetResolution(96, 96);
+            using (var graphics = Graphics.FromImage(image))
+            using (var font = new Font("Segoe UI Variable Text", points))
+            using (var brush = new SolidBrush(dark ? Color.FromArgb(190, 190, 190) : Color.FromArgb(70, 70, 70)))
+            {
+                graphics.Clear(dark ? Color.FromArgb(32, 32, 32) : Color.White);
+                graphics.TextRenderingHint = System.Drawing.Text.TextRenderingHint.AntiAliasGridFit;
+                graphics.DrawString(contraction + " keep going. Don't change O, C or 0.", font, brush, 12, 20);
+            }
+            var result = Pump(TextRecognition.RecognizeAsync(image));
+            string text = result.Text.Replace('’', '\'');
+            Assert(text.Contains("let's", StringComparison.OrdinalIgnoreCase), $"The apostrophe in let's was lost at {points}pt, dark={dark}: {text}");
+            Assert(text.Contains("O") && text.Contains("C"), "Real O/C text was removed: " + text);
+        }
+        var mapped = TextRecognition.MapBounds(new RectangleF(42, 32, 30, 15), 0, new Size(324, 174), new Size(100, 50), 12);
+        Assert(Math.Abs(mapped.X - 10) < .001 && Math.Abs(mapped.Y - 20f / 3) < .001 && Math.Abs(mapped.Width - 10) < .001 && Math.Abs(mapped.Height - 5) < .001, "OCR margin or scale shifted word coordinates");
+        var rotated = TextRecognition.MapBounds(new RectangleF(30, 40, 10, 20), 90, new Size(100, 100), new Size(100, 100), 0);
+        Assert(Math.Abs(rotated.X - 40) < .01 && Math.Abs(rotated.Y - 30) < .01 && Math.Abs(rotated.Width - 20) < .01, "Deskewed word geometry did not map back to the screen");
+    }
+
+    private static void TestIconFalsePositives()
+    {
+        foreach (string name in new[] { "refresh-icon.png", "edit-icon.png" })
+        {
+            using var icon = new Bitmap(Path.Combine(AppContext.BaseDirectory, "Fixtures", "Ocr", name));
+            var fakeWord = new RecognizedWord(name.StartsWith("refresh") ? "O" : "c", new RectangleF(0, 0, icon.Width, icon.Height), 0);
+            Assert(IconTextFilter.IsIconLike(icon, fakeWord), "Disconnected icon strokes were retained as a letter: " + name);
+            var filtered = IconTextFilter.Apply(icon, new TextRecognitionResult(fakeWord.Text, [fakeWord], "English"));
+            Assert(filtered.Words.Count == 0 && filtered.Text.Length == 0, "The rejected icon remained in copied text");
+            Assert(Pump(TextRecognition.RecognizeAsync(icon)).Words.Count == 0, "The icon was returned as text: " + name);
+        }
+        using var realLetter = new Bitmap(70, 70);
+        foreach (string letter in new[] { "O", "C", "o", "c" })
+        {
+            using (var graphics = Graphics.FromImage(realLetter))
+            using (var font = new Font("Segoe UI", 26))
+            { graphics.Clear(Color.White); graphics.DrawString(letter, font, Brushes.Black, 12, 12); }
+            Assert(!IconTextFilter.IsIconLike(realLetter, new RecognizedWord(letter, new RectangleF(0, 0, 70, 70), 0)), "A genuine standalone letter was filtered: " + letter);
+        }
+
+        using var refresh = new Bitmap(Path.Combine(AppContext.BaseDirectory, "Fixtures", "Ocr", "refresh-icon.png"));
+        using var edit = new Bitmap(Path.Combine(AppContext.BaseDirectory, "Fixtures", "Ocr", "edit-icon.png"));
+        using var row = new Bitmap(700, 90);
+        using (var graphics = Graphics.FromImage(row))
+        using (var font = new Font("Segoe UI", 12))
+        {
+            graphics.Clear(Color.FromArgb(32, 32, 32));
+            graphics.DrawImageUnscaled(refresh, 12, 10);
+            graphics.DrawImageUnscaled(edit, 75, 10);
+            graphics.DrawString("Let's copy text. O C and 0.", font, Brushes.White, 150, 22);
+        }
+        var actual = Pump(TextRecognition.RecognizeAsync(row));
+        Assert(actual.Words.All(w => w.Bounds.Left > 130), "An inline icon was treated as text");
+        Assert(actual.Text.Contains("Let's") && actual.Text.Contains("O C"), "Filtering damaged adjacent text: " + actual.Text);
+        var raw = new TextRecognitionResult("O" + Environment.NewLine + "c" + Environment.NewLine + actual.Text,
+            [new("O", new RectangleF(12, 10, refresh.Width, refresh.Height), 0),
+             new("c", new RectangleF(75, 10, edit.Width, edit.Height), 1),
+             ..actual.Words.Select(word => word with { Line = word.Line + 2 })], "English");
+        var cleaned = IconTextFilter.Apply(row, raw);
+        Assert(cleaned.Text == actual.Text && cleaned.Words.Count == actual.Words.Count, "Icon cleanup changed neighboring text or left ghost characters");
+    }
+
+    private static void TestRoundedToolbarGlyphs()
+    {
+        using var atlas = new Bitmap(850, 420);
+        using (var graphics = Graphics.FromImage(atlas))
+        using (var labelFont = new Font("Segoe UI", 11))
+        {
+            graphics.Clear(Color.FromArgb(29, 31, 36));
+            for (int row = 0; row < 5; row++)
+            {
+                float scale = new[] { 1f, 1.25f, 1.5f, 2f, 3f }[row];
+                graphics.DrawString((scale * 100) + "%", labelFont, Brushes.White, 20, 25 + row * 78);
+                int column = 0;
+                foreach (var glyph in new[] { ToolbarGlyph.Back, ToolbarGlyph.Copy, ToolbarGlyph.More, ToolbarGlyph.Close })
+                {
+                    ToolbarGlyphs.Draw(graphics, glyph, new RectangleF(140 + column++ * 170, 20 + row * 78, 20 * scale, 20 * scale), Color.White);
+                }
+            }
+        }
+        atlas.Save(Path.Combine(root, "rounded-toolbar-glyphs.png"), ImageFormat.Png);
     }
 
     private static void TestShortcuts()

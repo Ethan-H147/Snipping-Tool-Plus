@@ -7,7 +7,7 @@
     <Nullable>enable</Nullable>
     <ApplicationManifest>app.manifest</ApplicationManifest>
     <ApplicationIcon>app.ico</ApplicationIcon>
-    <Version>0.4.1</Version>
+    <Version>0.4.2</Version>
     <Description>Lightweight region capture for Windows.</Description>
     <AssemblyName>Snipping Tool+</AssemblyName>
     <RootNamespace>SnippingToolPlus</RootNamespace>

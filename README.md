@@ -38,7 +38,9 @@ The More menu contains **Copy selected**, **Select all**, **Remove line breaks**
 
 Recognition uses Windows OCR locally, with an installed recognition language matching your Windows preferences where available. It sends no images to a server. Text mode does not save a PNG or replace the clipboard until you choose a copy action. Accuracy depends on text size, contrast, language, and image quality. Missing recognition languages can be added in Windows Settings → Time & language → Language & region.
 
-Word highlights ease in over 160 ms and respect Windows' animation setting. Capture shortcuts and toolbar changes remain immediate.
+Recognition adds a small processing margin and pixel-aligned resampling to preserve small marks such as apostrophes. Low-contrast captures receive grayscale contrast normalization. A conservative connected-stroke check suppresses icon-like O/C candidates while retaining ordinary single-letter text; it does not use spelling replacements or a dictionary to rewrite words. Windows OCR can still confuse visually similar letters and symbols.
+
+The floating toolbar uses custom vector strokes with round caps, round joins, and rounded copy outlines instead of font glyphs. Word highlights ease in over 160 ms and respect Windows' animation setting. Capture shortcuts and toolbar changes remain immediate.
 
 
 ## Tests and diagnostics
@@ -49,6 +51,7 @@ Run the core tests with an isolated output directory:
 dotnet run --project .\SnippingToolPlus-investigation\SnippingToolPlus.Tests\SnippingToolPlus.Tests.csproj -c Release -- .\test-results\core --investigation-core
 dotnet run --project .\SnippingToolPlus-investigation\SnippingToolPlus.Tests\SnippingToolPlus.Tests.csproj -c Release -- .\test-results\rapid-capture --rapid-capture
 dotnet run --project .\SnippingToolPlus-investigation\SnippingToolPlus.Tests\SnippingToolPlus.Tests.csproj -c Release -- .\test-results\ocr --ocr-tests
+dotnet run --project .\SnippingToolPlus-investigation\SnippingToolPlus.Tests\SnippingToolPlus.Tests.csproj -c Release -- .\test-results\ocr-quality --ocr-quality
 dotnet run --project .\SnippingToolPlus-investigation\SnippingToolPlus.Tests\SnippingToolPlus.Tests.csproj -c Release -- .\test-results\ocr-ui --ocr-ui
 dotnet run --project .\SnippingToolPlus-investigation\SnippingToolPlus.Tests\SnippingToolPlus.Tests.csproj -c Release -- .\test-results\ocr-overlay --ocr-overlay
 dotnet build .\SnippingToolPlus-investigation\SnippingToolPlus.Diagnostics\SnippingToolPlus.Diagnostics.csproj -c Release
