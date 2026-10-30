@@ -132,7 +132,7 @@ internal sealed class TextRecognitionCanvas : Control
         base.OnPaint(e);
         e.Graphics.Clear(Theme.IsDark ? Color.FromArgb(24, 24, 28) : Color.FromArgb(236, 236, 242));
         e.Graphics.InterpolationMode = InterpolationMode.HighQualityBicubic;
-        if (NativePixels) e.Graphics.DrawImageUnscaled(image, Point.Empty);
+        if (NativePixels) e.Graphics.DrawImage(image, new Rectangle(Point.Empty, image.Size), new Rectangle(Point.Empty, image.Size), GraphicsUnit.Pixel);
         else e.Graphics.DrawImage(image, ImageBounds);
         if (NativePixels)
         {

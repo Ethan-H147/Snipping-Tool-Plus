@@ -7,14 +7,42 @@ using Windows.Storage.Streams;
 
 namespace SnippingToolPlus;
 
-internal sealed record RecognizedWord(string Text, RectangleF Bounds, int Line);
+internal sealed record RecognizedWord(string Text, RectangleF Bounds, int Line, string Separator = " ");
 internal sealed record TextRecognitionResult(string Text, IReadOnlyList<RecognizedWord> Words, string Language)
 {
     public string SelectedText(IEnumerable<int> indices)
     {
         var selected = indices.Distinct().Order().Where(i => i >= 0 && i < Words.Count).Select(i => Words[i]);
-        return string.Join(Environment.NewLine, selected.GroupBy(word => word.Line)
-            .Select(line => string.Join(" ", line.Select(word => word.Text))));
+        return string.Join(Environment.NewLine, selected.GroupBy(word => word.Line).Select(JoinLine));
+    }
+
+    internal static string JoinLine(IEnumerable<RecognizedWord> words)
+    {
+        var text = new System.Text.StringBuilder();
+        foreach (var word in words)
+        {
+            if (text.Length > 0) text.Append(word.Separator);
+            text.Append(word.Text);
+        }
+        return text.ToString();
+    }
+
+    internal TextRecognitionResult Format()
+    {
+        var words = Words.ToArray();
+        for (int i = 1; i < words.Length; i++)
+        {
+            if (words[i].Line != words[i - 1].Line || string.IsNullOrEmpty(words[i].Text)
+                || !string.IsNullOrWhiteSpace(words[i].Separator)) continue;
+            if (words[i].Text.All(c => ".,;:!?%)]}’".Contains(c))
+                || words[i - 1].Text.EndsWith('(') || words[i - 1].Text.EndsWith('['))
+                words[i] = words[i] with { Separator = "" };
+        }
+        return this with
+        {
+            Words = words,
+            Text = string.Join(Environment.NewLine, words.GroupBy(word => word.Line).Select(JoinLine))
+        };
     }
 
     public static string WithoutLineBreaks(string text) =>
@@ -45,24 +73,37 @@ internal static class TextRecognition
                 using var prepared = new Bitmap(size.Width + 2 * padding, size.Height + 2 * padding, PixelFormat.Format32bppArgb);
                 using var source = new Bitmap(snapshot.Width, snapshot.Height, PixelFormat.Format32bppArgb);
                 using (var graphics = Graphics.FromImage(source))
-                { graphics.Clear(Color.White); graphics.DrawImageUnscaled(snapshot, Point.Empty); }
+                { graphics.Clear(Color.White); graphics.DrawImage(snapshot, new Rectangle(Point.Empty, source.Size), new Rectangle(Point.Empty, snapshot.Size), GraphicsUnit.Pixel); }
                 NormalizeContrast(source);
                 using (var graphics = Graphics.FromImage(prepared))
                 {
                     graphics.Clear(Color.White);
                     graphics.InterpolationMode = InterpolationMode.HighQualityBicubic;
                     graphics.PixelOffsetMode = PixelOffsetMode.Half;
-                    graphics.DrawImage(source, new Rectangle(padding, padding, size.Width, size.Height));
+                    graphics.DrawImage(source, new Rectangle(padding, padding, size.Width, size.Height), new Rectangle(Point.Empty, source.Size), GraphicsUnit.Pixel);
                 }
                 var result = await ReadAsync(engine, prepared, cancellationToken).ConfigureAwait(false);
-                var words = result.Lines.SelectMany((line, lineIndex) => line.Words.Select(word =>
-                    new RecognizedWord(word.Text, MapBounds(new RectangleF((float)word.BoundingRect.X,
-                        (float)word.BoundingRect.Y, (float)word.BoundingRect.Width, (float)word.BoundingRect.Height),
-                        result.TextAngle ?? 0, prepared.Size, snapshot.Size, padding), lineIndex)))
-                    .Where(w => w.Bounds.Width > 0 && w.Bounds.Height > 0).ToArray();
+                var words = new List<RecognizedWord>();
+                for (int lineIndex = 0; lineIndex < result.Lines.Count; lineIndex++)
+                {
+                    var line = result.Lines[lineIndex];
+                    int cursor = 0;
+                    foreach (var word in line.Words)
+                    {
+                        int offset = line.Text.IndexOf(word.Text, cursor, StringComparison.Ordinal);
+                        string separator = offset >= cursor ? line.Text[cursor..offset] : " ";
+                        if (offset >= 0) cursor = offset + word.Text.Length;
+                        var bounds = MapBounds(new RectangleF((float)word.BoundingRect.X, (float)word.BoundingRect.Y,
+                            (float)word.BoundingRect.Width, (float)word.BoundingRect.Height),
+                            result.TextAngle ?? 0, prepared.Size, snapshot.Size, padding);
+                        if (bounds.Width > 0 && bounds.Height > 0) words.Add(new(word.Text, bounds, lineIndex, separator));
+                    }
+                }
                 var recognized = new TextRecognitionResult(string.Join(Environment.NewLine, result.Lines.Select(line => line.Text)),
                     words, engine.RecognizerLanguage.NativeName);
-                return DurationTextCorrection.Apply(IconTextFilter.Apply(snapshot, recognized));
+                var filtered = IconTextFilter.Apply(snapshot, recognized);
+                var symbols = ArrowTextRecognition.Apply(snapshot, filtered);
+                return DurationTextCorrection.Apply(VersionTextCorrection.Apply(symbols));
             }
         });
     }
@@ -124,15 +165,17 @@ internal static class TextRecognition
             for (int i = 0; i < 256; i++) { count += histogram[i]; if (count >= tail) { low = i; break; } }
             count = 0;
             for (int i = 255; i >= 0; i--) { count += histogram[i]; if (count >= tail) { high = i; break; } }
-            if (high - low < 8 || high - low >= 128) return;
             bool invert = borderCount > 0 && borderSum / borderCount < 128;
-            int range = Math.Max(1, high - low);
+            bool stretch = high - low is >= 8 and < 128;
+            if (!stretch && !invert) return;
+            int range = stretch ? high - low : 255;
+            int floor = stretch ? low : 0;
             for (int y = 0; y < image.Height; y++)
             for (int x = 0; x < image.Width; x++)
             {
                 int i = y * data.Stride + x * 4;
                 int gray = (pixels[i + 2] * 77 + pixels[i + 1] * 150 + pixels[i] * 29) >> 8;
-                int value = Math.Clamp((gray - low) * 255 / range, 0, 255);
+                int value = Math.Clamp((gray - floor) * 255 / range, 0, 255);
                 if (invert) value = 255 - value;
                 pixels[i] = pixels[i + 1] = pixels[i + 2] = (byte)value; pixels[i + 3] = 255;
             }
@@ -141,7 +184,7 @@ internal static class TextRecognition
         finally { image.UnlockBits(data); }
     }
 
-    internal static Size RecognitionSize(Size source, int limit, double upscale = 2)
+    internal static Size RecognitionSize(Size source, int limit, double upscale = 4)
     {
         if (source.Width < 1 || source.Height < 1 || limit < 1) throw new ArgumentOutOfRangeException(nameof(source));
         double scale = Math.Min(upscale, limit / (double)Math.Max(source.Width, source.Height));

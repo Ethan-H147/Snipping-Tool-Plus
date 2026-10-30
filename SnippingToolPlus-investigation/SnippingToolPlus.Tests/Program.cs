@@ -19,6 +19,9 @@ internal static class Program
         {
             if (args.Contains("--ocr-quality"))
             {
+                Run("Reported passage preserves version, arrow, durations, and copied punctuation", TestPassageRecognition);
+                Run("DPI metadata does not resize OCR pixels; punctuation and non-Latin spacing survive selection", TestDpiAndFormatting);
+                Run("Inline arrow recovery preserves letters and mathematical symbols", TestArrowSymbols);
                 Run("Compact durations distinguish seconds from I/l and retain normal text", TestDurationRecognition);
                 Run("Small let's text keeps its apostrophe and genuine O/C letters", TestSmallTextQuality);
                 Run("Icon false positives are removed without damaging real text", TestIconFalsePositives);
@@ -165,7 +168,7 @@ internal static class Program
     private static void TestRecognitionFormatting()
     {
         Assert(TextRecognition.RecognitionSize(new Size(6000, 3000), 2600) == new Size(2600, 1300), "Large image scaling exceeded the engine limit");
-        Assert(TextRecognition.RecognitionSize(new Size(100, 50), 2600) == new Size(200, 100), "Small text was not upscaled");
+        Assert(TextRecognition.RecognitionSize(new Size(100, 50), 2600) == new Size(400, 200), "Small text was not upscaled");
         Assert(TextRecognition.RecognitionSize(new Size(1, 6000), 2600).Width == 1, "Thin image collapsed");
         Assert(TextRecognitionResult.WithoutLineBreaks("First\r\n  second\nthird") == "First second third", "Line break removal failed");
         var result = new TextRecognitionResult("One two\nThree", [
@@ -456,6 +459,104 @@ internal static class Program
     }
 
 
+    private static void TestPassageRecognition()
+    {
+        foreach (string family in new[] { "Segoe UI Variable Text", "Arial" })
+        foreach (float points in new[] { 10f, 12f })
+        foreach (bool dark in new[] { false, true })
+        {
+            using var image = new Bitmap(1000, 220);
+            image.SetResolution(96, 96);
+            using (var graphics = Graphics.FromImage(image))
+            using (var font = new Font(family, points))
+            using (var heading = new Font(family, points + 1, FontStyle.Bold))
+            {
+                graphics.Clear(dark ? Color.FromArgb(32, 32, 32) : Color.White);
+                var ink = dark ? Brushes.White : Brushes.Black;
+                graphics.TextRenderingHint = System.Drawing.Text.TextRenderingHint.AntiAliasGridFit;
+                graphics.DrawString("Installed v0.4.3.", heading, ink, 14, 15);
+                graphics.DrawString("• Each line now has one subtle box, with continuous highlighting when selecting words.", font, ink, 14, 65);
+                graphics.DrawString("• Added duration-aware correction for 24m Ils → 24m 11s.", font, ink, 14, 110);
+                graphics.DrawString("• All 13 targeted checks passed; settings and shortcuts preserved.", font, ink, 14, 155);
+            }
+            if (family.StartsWith("Segoe") && points == 12 && dark) image.Save(Path.Combine(root, "reported-passage-source.png"));
+            var corrected = Pump(TextRecognition.RecognizeAsync(image));
+            Assert(corrected.Text.Contains("Installed v0.4.3."), "Version number was misread: " + corrected.Text);
+            Assert(corrected.Text.Contains("24m Ils → 24m 11s."), "Arrow, duration, or punctuation was damaged: " + corrected.Text);
+            Assert(corrected.Text.Contains("All 13 targeted checks passed; settings and shortcuts preserved."), "The bottom line was clipped or misread: " + corrected.Text);
+            Assert(corrected.Text == corrected.SelectedText(Enumerable.Range(0, corrected.Words.Count)), "Copy all and selected text format differently");
+            if (family.StartsWith("Segoe"))
+            {
+                string expected = string.Join(Environment.NewLine,
+                    "Installed v0.4.3.",
+                    "• Each line now has one subtle box, with continuous highlighting when selecting words.",
+                    "• Added duration-aware correction for 24m Ils → 24m 11s.",
+                    "• All 13 targeted checks passed; settings and shortcuts preserved.");
+                Assert(corrected.Text == expected, "The reproduced passage differs from the source: " + corrected.Text);
+            }
+        }
+    }
+
+    private static void TestDpiAndFormatting()
+    {
+        using var source = new Bitmap(700, 230);
+        source.SetResolution(96, 96);
+        using (var graphics = Graphics.FromImage(source))
+        using (var font = new Font("Segoe UI", 18))
+        {
+            graphics.Clear(Color.White);
+            graphics.DrawString("TOP LINE 12345", font, Brushes.Black, 18, 18);
+            graphics.DrawString("BOTTOM LINE 67890", font, Brushes.Black, 18, 180);
+        }
+        TextRecognitionResult? baseline = null;
+        foreach (int dpi in new[] { 96, 144, 192 })
+        {
+            using var image = (Bitmap)source.Clone(); image.SetResolution(dpi, dpi);
+            var result = Pump(TextRecognition.RecognizeAsync(image));
+            Assert(result.Text.Contains("12345") && result.Text.Contains("67890"), "DPI metadata clipped the source image");
+            if (baseline != null)
+                Assert(result.Text == baseline.Text && result.Words.Select(w => w.Bounds).SequenceEqual(baseline.Words.Select(w => w.Bounds)), "DPI metadata changed OCR pixels or word geometry");
+            baseline = result;
+        }
+        var punctuation = new TextRecognitionResult("Hello , world .", [
+            new("Hello", new(0, 0, 35, 20), 0),
+            new(",", new(35, 0, 3, 20), 0),
+            new("world", new(45, 0, 35, 20), 0),
+            new(".", new(80, 0, 3, 20), 0)], "English").Format();
+        Assert(punctuation.Text == "Hello, world." && punctuation.SelectedText([0, 1, 2, 3]) == punctuation.Text, "Punctuation introduced spaces in copied selections");
+        var noSpaces = new TextRecognitionResult("中文。", [
+            new("中", new(0, 0, 20, 20), 0, ""),
+            new("文", new(20, 0, 20, 20), 0, ""),
+            new("。", new(40, 0, 5, 20), 0, "")], "Chinese").Format();
+        Assert(noSpaces.Text == "中文。" && noSpaces.SelectedText([0, 1, 2]) == "中文。", "Selection inserted spaces into text without word separators");
+        foreach (string text in new[] { "vo.4.3", "vO.12.0", "v1.O.2" })
+        {
+            var corrected = VersionTextCorrection.Apply(new(text, [new(text, new(0, 0, 50, 20), 0)], "English"));
+            Assert(!corrected.Text.Contains('o') && !corrected.Text.Contains('O'), "A dotted version retained an O/0 error");
+        }
+        foreach (string text in new[] { "hello", "voodoo", "OOO", "O C 0", "cavo.4.3" })
+            Assert(VersionTextCorrection.Apply(new(text, [new(text, new(0, 0, 50, 20), 0)], "English")).Text == text, "Version disambiguation changed ordinary text");
+    }
+
+    private static void TestArrowSymbols()
+    {
+        foreach (string symbol in new[] { "→", "←", "—Y", "—i", "-4", "m", "w", "⊣", "⊢" })
+        {
+            using var image = new Bitmap(700, 100); image.SetResolution(96, 96);
+            using (var graphics = Graphics.FromImage(image))
+            using (var font = new Font("Segoe UI", 18))
+            {
+                graphics.Clear(Color.White);
+                graphics.DrawString("Alpha " + symbol + " Beta", font, Brushes.Black, 14, 28);
+            }
+            var result = Pump(TextRecognition.RecognizeAsync(image));
+            if (symbol is "→" or "←")
+                Assert(result.Text.Contains(symbol), "A real inline arrow was not recovered: " + result.Text);
+            else
+                Assert(!result.Text.Contains('→') && !result.Text.Contains('←'), "Non-arrow pixels were replaced by an arrow: " + symbol + " -> " + result.Text);
+        }
+    }
+
     private static void TestDurationRecognition()
     {
         TextRecognitionResult Recognized(string text)
@@ -476,6 +577,8 @@ internal static class Program
             ("Worked for 24m IIs", "Worked for 24m 11s"),
             ("Worked for 24m lls.", "Worked for 24m 11s."),
             ("Worked for 24m 1ls", "Worked for 24m 11s"),
+            ("Worked for 24m 1 Is .", "Worked for 24m 11s."),
+            ("Worked for 24m 11 s.", "Worked for 24m 11s."),
             ("Worked for 24m I5s", "Worked for 24m 15s"),
             ("Worked for 1h 5ls", "Worked for 1h 51s"),
             ("Worked for 1h 24m Ils\nIls parlent", "Worked for 1h 24m 11s\nIls parlent")
@@ -484,7 +587,7 @@ internal static class Program
             var raw = Recognized(input);
             var corrected = DurationTextCorrection.Apply(raw);
             Assert(corrected.Text == expected.Replace("\n", Environment.NewLine), "Duration correction failed: " + corrected.Text);
-            Assert(corrected.Words.Select(w => w.Bounds).SequenceEqual(raw.Words.Select(w => w.Bounds)), "Duration correction moved text");
+            Assert(corrected.Words.Select(w => w.Bounds).Aggregate(RectangleF.Union) == raw.Words.Select(w => w.Bounds).Aggregate(RectangleF.Union), "Duration correction moved text");
             Assert(corrected.SelectedText(Enumerable.Range(0, corrected.Words.Count)) == corrected.Text, "Selected duration and Copy all disagree");
         }
         foreach (string text in new[]
