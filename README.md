@@ -30,7 +30,7 @@ To update an existing QuietSnip installation, close the old app and place the ne
 
 ## Text recognition
 
-Start your normal snip, click **Text** in the capture toolbar, and select a region. The selected box stays exactly where you drew it on the frozen screen. Recognized words are highlighted inside the box; drag across them to select text, or press Ctrl+A to select everything. Ctrl+C copies the selected words, or all recognized text if nothing is selected.
+Start your normal snip, click **Text** in the capture toolbar, and select a region. The selected box stays exactly where you drew it on the frozen screen. Each recognized line has one subtle highlight inside the box; drag across words to select text, or press Ctrl+A to select everything. Ctrl+C copies the selected words, or all recognized text if nothing is selected.
 
 A compact floating toolbar provides **Back**, **Copy all text**, **More**, and **Close**. Back starts a fresh region selection; Close or Escape dismisses OCR. Drag the box edges or corners to resize the region and recognize it again. Resizing cancels stale recognition work so older results cannot overwrite the new selection.
 
@@ -38,9 +38,9 @@ The More menu contains **Copy selected**, **Select all**, **Remove line breaks**
 
 Recognition uses Windows OCR locally, with an installed recognition language matching your Windows preferences where available. It sends no images to a server. Text mode does not save a PNG or replace the clipboard until you choose a copy action. Accuracy depends on text size, contrast, language, and image quality. Missing recognition languages can be added in Windows Settings → Time & language → Language & region.
 
-Recognition adds a small processing margin and pixel-aligned resampling to preserve small marks such as apostrophes. Low-contrast captures receive grayscale contrast normalization. A conservative connected-stroke check suppresses icon-like O/C candidates while retaining ordinary single-letter text; it does not use spelling replacements or a dictionary to rewrite words. Windows OCR can still confuse visually similar letters and symbols.
+Recognition adds a small processing margin and pixel-aligned resampling to preserve small marks such as apostrophes. Low-contrast captures receive grayscale contrast normalization. A conservative connected-stroke check suppresses icon-like O/C candidates while retaining ordinary single-letter text; it does not use a spelling dictionary. In compact durations at the end of a line, the seconds component uses a preceding numeric hour/minute component to distinguish I/l from 1 (for example, “24m Ils” becomes “24m 11s”). Other words retain the OCR output. Windows OCR can still confuse visually similar letters and symbols.
 
-The floating toolbar uses custom vector strokes with round caps, round joins, and rounded copy outlines instead of font glyphs. Word highlights ease in over 160 ms and respect Windows' animation setting. Capture shortcuts and toolbar changes remain immediate.
+The floating toolbar uses custom vector strokes with round caps, round joins, and rounded copy outlines instead of font glyphs. Line highlights ease in over 160 ms and respect Windows' animation setting. Capture shortcuts and toolbar changes remain immediate.
 
 
 ## Tests and diagnostics

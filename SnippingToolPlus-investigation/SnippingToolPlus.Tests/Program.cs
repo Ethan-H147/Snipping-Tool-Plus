@@ -19,6 +19,7 @@ internal static class Program
         {
             if (args.Contains("--ocr-quality"))
             {
+                Run("Compact durations distinguish seconds from I/l and retain normal text", TestDurationRecognition);
                 Run("Small let's text keeps its apostrophe and genuine O/C letters", TestSmallTextQuality);
                 Run("Icon false positives are removed without damaging real text", TestIconFalsePositives);
                 Run("Custom rounded toolbar glyphs at five display scales", TestRoundedToolbarGlyphs);
@@ -26,6 +27,7 @@ internal static class Program
             }
             if (args.Contains("--ocr-overlay"))
             {
+                Run("One highlight per line with continuous word selection", TestLineHighlights);
                 Run("On-screen OCR stays aligned, selectable, and open until dismissed", TestScreenTextOverlay);
                 Run("Resizing, stale recognition cancellation, back, and close", TestScreenTextResize);
                 Run("Screen OCR is default; app editor is optional", TestTextCaptureThroughTray);
@@ -453,6 +455,143 @@ internal static class Program
         for (int i = 0; i < 25; i++) { Application.DoEvents(); Thread.Sleep(5); }
     }
 
+
+    private static void TestDurationRecognition()
+    {
+        TextRecognitionResult Recognized(string text)
+        {
+            var words = new List<RecognizedWord>();
+            string[] lines = text.Split('\n');
+            for (int line = 0; line < lines.Length; line++)
+            {
+                int x = 0;
+                foreach (string word in lines[line].Split(' ', StringSplitOptions.RemoveEmptyEntries))
+                { words.Add(new(word, new RectangleF(x, line * 24, word.Length * 8, 20), line)); x += (word.Length + 1) * 8; }
+            }
+            return new(text, words, "English");
+        }
+        foreach (var (input, expected) in new[]
+        {
+            ("Worked for 24m Ils", "Worked for 24m 11s"),
+            ("Worked for 24m IIs", "Worked for 24m 11s"),
+            ("Worked for 24m lls.", "Worked for 24m 11s."),
+            ("Worked for 24m 1ls", "Worked for 24m 11s"),
+            ("Worked for 24m I5s", "Worked for 24m 15s"),
+            ("Worked for 1h 5ls", "Worked for 1h 51s"),
+            ("Worked for 1h 24m Ils\nIls parlent", "Worked for 1h 24m 11s\nIls parlent")
+        })
+        {
+            var raw = Recognized(input);
+            var corrected = DurationTextCorrection.Apply(raw);
+            Assert(corrected.Text == expected.Replace("\n", Environment.NewLine), "Duration correction failed: " + corrected.Text);
+            Assert(corrected.Words.Select(w => w.Bounds).SequenceEqual(raw.Words.Select(w => w.Bounds)), "Duration correction moved text");
+            Assert(corrected.SelectedText(Enumerable.Range(0, corrected.Words.Count)) == corrected.Text, "Selected duration and Copy all disagree");
+        }
+        foreach (string text in new[]
+        {
+            "Ils parlent", "IIS server", "Worked for 24m IIS", "Worked for 24m Ils parlent",
+            "Worked for 24ms", "Worked for 24m 11s", "Worked for 24m 6Is", "IIs", "for 24m Files"
+        })
+            Assert(DurationTextCorrection.Apply(Recognized(text)).Text == text, "Ordinary text was changed: " + text);
+
+        var merged = new TextRecognitionResult("Worked for 24m Ils", [
+            new("Worked", new RectangleF(0, 0, 40, 20), 0),
+            new("for", new RectangleF(48, 0, 20, 20), 0),
+            new("24m Ils", new RectangleF(76, 0, 50, 20), 0)], "English");
+        var mergedCorrection = DurationTextCorrection.Apply(merged);
+        Assert(mergedCorrection.Text == "Worked for 24m 11s" && mergedCorrection.Words[2].Text == "24m 11s", "A merged OCR token corrupted the duration or copied text");
+
+        foreach (bool dark in new[] { false, true })
+        foreach (float points in new[] { 9f, 10f, 11f, 12f })
+        {
+            using var image = new Bitmap(420, 70);
+            image.SetResolution(96, 96);
+            using (var graphics = Graphics.FromImage(image))
+            using (var font = new Font("Segoe UI Variable Text", points))
+            {
+                graphics.Clear(dark ? Color.FromArgb(32, 32, 32) : Color.White);
+                graphics.TextRenderingHint = System.Drawing.Text.TextRenderingHint.AntiAliasGridFit;
+                graphics.DrawString("Worked for 24m 11s", font, dark ? Brushes.White : Brushes.Black, 12, 20);
+            }
+            var actual = Pump(TextRecognition.RecognizeAsync(image));
+            Assert(System.Text.RegularExpressions.Regex.IsMatch(actual.Text, @"24\s*m\s*11\s*s"), $"Duration misread at {points}pt, dark={dark}: {actual.Text}");
+        }
+    }
+
+    private static void TestLineHighlights()
+    {
+        using var image = new Bitmap(1040, 260);
+        image.SetResolution(96, 96);
+        using (var graphics = Graphics.FromImage(image))
+        using (var font = new Font("Segoe UI Variable Text", 14))
+        {
+            graphics.Clear(Color.FromArgb(32, 32, 32));
+            graphics.DrawString("Improved small-text OCR and filtering for the supplied icons.", font, Brushes.White, 24, 30);
+            graphics.DrawString("1. Replaced copy, X, and ... with custom rounded-stroke glyphs.", font, Brushes.White, 24, 100);
+            graphics.DrawString("2. Passed 24 targeted checks; settings and shortcuts preserved.", font, Brushes.White, 24, 150);
+        }
+        var recognized = Pump(TextRecognition.RecognizeAsync(image));
+        var rows = recognized.Words.Select((word, index) => (word, index)).GroupBy(item => item.word.Line).ToArray();
+        Assert(rows.Length == 3 && recognized.Words.Count > 20, "The paragraph fixture lost its text lines: " + recognized.Text);
+        foreach (bool native in new[] { false, true })
+        {
+            Theme.TestDark = native;
+            using var host = new Form { ClientSize = native ? image.Size : new Size(780, 230), ShowInTaskbar = false, AutoScaleMode = AutoScaleMode.None };
+            using var canvas = new TextRecognitionCanvas(image) { Dock = DockStyle.Fill, NativePixels = native };
+            host.Controls.Add(canvas); canvas.SetResult(recognized, false);
+            host.Show(); Application.DoEvents();
+            Assert(canvas.LineBounds.Count == 3, "The paragraph did not have one box per line");
+            using (var rendered = new Bitmap(canvas.Width, canvas.Height))
+            {
+                canvas.DrawToBitmap(rendered, new Rectangle(Point.Empty, rendered.Size));
+                rendered.Save(Path.Combine(root, native ? "line-highlights-native.png" : "line-highlights-scaled.png"), ImageFormat.Png);
+                var a = canvas.WordBounds(rows[0].First().index);
+                var b = canvas.WordBounds(rows[0].Skip(1).First().index);
+                int x = (int)((a.Right + b.Left) / 2), y = (int)(canvas.LineBounds[0].Top + 3);
+                Assert(rendered.GetPixel(x, y).ToArgb() != image.GetPixel(0, 0).ToArgb(), "The line highlight left a gap between words");
+            }
+            Point Center(int index)
+            {
+                var bounds = canvas.WordBounds(index);
+                return Point.Round(new PointF(bounds.Left + bounds.Width / 2, bounds.Top + bounds.Height / 2));
+            }
+            void Drag(int start, int end)
+            {
+                var a = Center(start); var b = Center(end);
+                CanvasEvent(canvas, "OnMouseDown", new(MouseButtons.Left, 1, a.X, a.Y, 0));
+                CanvasEvent(canvas, "OnMouseMove", new(MouseButtons.Left, 0, b.X, b.Y, 0));
+                CanvasEvent(canvas, "OnMouseUp", new(MouseButtons.Left, 1, b.X, b.Y, 0));
+            }
+            int first = rows[0].Skip(1).First().index, second = rows[0].Skip(2).First().index;
+            Drag(first, second);
+            Assert(canvas.SelectedIndices.Count == 2 && canvas.SelectionBounds.Count == 1, "Adjacent selected words were not one continuous span");
+            Assert(recognized.SelectedText(canvas.SelectedIndices) == recognized.SelectedText([first, second]), "Word selection changed with line boxes");
+            int nextLine = rows[1].Skip(1).First().index;
+            Drag(nextLine, first);
+            Assert(canvas.SelectionBounds.Count == 2, "A selection across lines was not split by line");
+            Assert(canvas.SelectedIndices.Count == nextLine - first + 1, "Reverse multi-line drag lost words");
+            using (var rendered = new Bitmap(canvas.Width, canvas.Height))
+            {
+                canvas.DrawToBitmap(rendered, new Rectangle(Point.Empty, rendered.Size));
+                rendered.Save(Path.Combine(root, native ? "line-selection-native.png" : "line-selection-scaled.png"), ImageFormat.Png);
+            }
+            var beforeGap = canvas.WordBounds(rows[0].First().index);
+            var afterGap = canvas.WordBounds(rows[0].Skip(1).First().index);
+            int gapX = (int)((beforeGap.Right + afterGap.Left) / 2), gapY = (int)(canvas.LineBounds[0].Top + canvas.LineBounds[0].Height / 2);
+            CanvasEvent(canvas, "OnMouseDown", new(MouseButtons.Left, 1, gapX, gapY, 0));
+            CanvasEvent(canvas, "OnMouseUp", new(MouseButtons.Left, 1, gapX, gapY, 0));
+            Assert(canvas.SelectedIndices.Count == 1, "Clicking a space inside the line could not start a text selection");
+
+            canvas.SelectAllWords();
+            Assert(canvas.SelectedIndices.Count == recognized.Words.Count && canvas.SelectionBounds.Count == 3, "Select all did not retain line grouping");
+            canvas.SetResult(new("", [], "English"), false);
+            Assert(canvas.LineBounds.Count == 0 && canvas.SelectionBounds.Count == 0, "Old line highlights survived an empty result");
+            canvas.SetResult(new("i", [new("i", new RectangleF(1, 1, 1, 1), 0)], "English"), false);
+            using (var tiny = new Bitmap(canvas.Width, canvas.Height)) canvas.DrawToBitmap(tiny, new Rectangle(Point.Empty, tiny.Size));
+            host.Close();
+        }
+        Theme.TestDark = null;
+    }
 
     private static void TestSmallTextQuality()
     {

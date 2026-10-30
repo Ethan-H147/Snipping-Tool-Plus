@@ -17,6 +17,7 @@ internal sealed class TextRecognitionCanvas : Control
     private readonly System.Windows.Forms.Timer revealTimer = new() { Interval = 16 };
     private readonly Stopwatch revealClock = new();
     private TextRecognitionResult? result;
+    private int[][] lines = [];
     private float reveal = 1;
     private int anchor = -1, hovered = -1;
     public event Action? SelectionChanged;
@@ -42,7 +43,7 @@ internal sealed class TextRecognitionCanvas : Control
 
     internal void UpdateImage(Bitmap value)
     {
-        image = value; result = null; selected.Clear(); anchor = hovered = -1; revealTimer.Stop();
+        image = value; result = null; lines = []; selected.Clear(); anchor = hovered = -1; revealTimer.Stop();
         Invalidate(); SelectionChanged?.Invoke();
     }
 
@@ -56,6 +57,8 @@ internal sealed class TextRecognitionCanvas : Control
     public void SetResult(TextRecognitionResult value, bool animate = true)
     {
         result = value; selected.Clear(); anchor = hovered = -1;
+        lines = value.Words.Select((word, index) => (word.Line, index))
+            .GroupBy(item => item.Line).Select(line => line.Select(item => item.index).ToArray()).ToArray();
         revealTimer.Stop();
         reveal = 1;
         if (animate && MotionEnabled)
@@ -94,6 +97,36 @@ internal sealed class TextRecognitionCanvas : Control
             word.Width * target.Width / image.Width, word.Height * target.Height / image.Height);
     }
 
+    private RectangleF BoundsFor(IEnumerable<int> indices) =>
+        indices.Select(WordBounds).Aggregate(RectangleF.Union);
+
+    internal IReadOnlyList<RectangleF> LineBounds => lines.Select(BoundsFor).ToArray();
+
+    internal IReadOnlyList<RectangleF> SelectionBounds
+    {
+        get
+        {
+            var spans = new List<RectangleF>();
+            foreach (var line in lines)
+            {
+                var lineBounds = BoundsFor(line);
+                RectangleF? span = null;
+                foreach (int index in line)
+                {
+                    if (selected.Contains(index))
+                    {
+                        var word = WordBounds(index);
+                        word.Y = lineBounds.Y; word.Height = lineBounds.Height;
+                        span = span is RectangleF previous ? RectangleF.Union(previous, word) : word;
+                    }
+                    else if (span is RectangleF previous) { spans.Add(previous); span = null; }
+                }
+                if (span is RectangleF remaining) spans.Add(remaining);
+            }
+            return spans;
+        }
+    }
+
     protected override void OnPaint(PaintEventArgs e)
     {
         base.OnPaint(e);
@@ -108,25 +141,47 @@ internal sealed class TextRecognitionCanvas : Control
         }
         if (result == null) return;
         e.Graphics.SmoothingMode = SmoothingMode.AntiAlias;
-        using var normalFill = new SolidBrush(Color.FromArgb((int)((NativePixels ? 48 : 34) * reveal), NativePixels ? Color.White : Theme.Accent));
-        using var hoverFill = new SolidBrush(Color.FromArgb((int)(80 * reveal), NativePixels ? Color.White : Theme.Accent));
-        using var selectedFill = new SolidBrush(Color.FromArgb((int)(140 * reveal), Theme.Accent));
-        using var normalOutline = new Pen(Color.FromArgb((int)(110 * reveal), NativePixels ? Color.White : Theme.Accent));
-        using var selectedOutline = new Pen(Color.FromArgb((int)(245 * reveal), Theme.Accent), 2);
-        for (int i = 0; i < result.Words.Count; i++)
+        using var normalFill = new SolidBrush(Color.FromArgb((int)((NativePixels ? 24 : 18) * reveal), NativePixels ? Color.White : Theme.Accent));
+        using var hoverFill = new SolidBrush(Color.FromArgb((int)(48 * reveal), NativePixels ? Color.White : Theme.Accent));
+        using var selectedFill = new SolidBrush(Color.FromArgb((int)(120 * reveal), Theme.Accent));
+        using var normalOutline = new Pen(Color.FromArgb((int)(75 * reveal), NativePixels ? Color.White : Theme.Accent));
+        foreach (var line in lines)
         {
-            bool active = selected.Contains(i);
-            RectangleF bounds = WordBounds(i);
-            e.Graphics.FillRectangle(active ? selectedFill : i == hovered ? hoverFill : normalFill, bounds);
-            e.Graphics.DrawRectangle(active ? selectedOutline : normalOutline, bounds.X, bounds.Y, bounds.Width, bounds.Height);
+            using var path = HighlightPath(BoundsFor(line));
+            e.Graphics.FillPath(line.Contains(hovered) ? hoverFill : normalFill, path);
+            e.Graphics.DrawPath(normalOutline, path);
         }
+        foreach (var bounds in SelectionBounds)
+        {
+            using var path = HighlightPath(bounds);
+            e.Graphics.FillPath(selectedFill, path);
+        }
+    }
+
+    private GraphicsPath HighlightPath(RectangleF bounds)
+    {
+        var pixels = Rectangle.Round(bounds);
+        pixels.Width = Math.Max(1, pixels.Width); pixels.Height = Math.Max(1, pixels.Height);
+        if (pixels.Width < 2 || pixels.Height < 2)
+        {
+            var path = new GraphicsPath(); path.AddRectangle(pixels); return path;
+        }
+        return Theme.RoundedRectangle(pixels, Math.Min(Math.Min(pixels.Width, pixels.Height) / 2, Math.Max(1, (int)(3 * DeviceDpi / 96f))));
     }
 
     private int HitWord(Point location)
     {
         if (result == null) return -1;
-        for (int i = 0; i < result.Words.Count; i++)
-            if (RectangleF.Inflate(WordBounds(i), 3, 3).Contains(location)) return i;
+        foreach (var line in lines)
+        {
+            if (!RectangleF.Inflate(BoundsFor(line), 3, 3).Contains(location)) continue;
+            // Keep spaces within a line selectable, using the closest word in reading order.
+            return line.MinBy(index =>
+            {
+                var bounds = WordBounds(index);
+                return Math.Max(0, Math.Max(bounds.Left - location.X, location.X - bounds.Right));
+            });
+        }
         return -1;
     }
 
@@ -148,7 +203,7 @@ internal sealed class TextRecognitionCanvas : Control
         if (frameCursor != null && !Capture) { Cursor = frameCursor; return; }
         int hit = HitWord(e.Location);
         Cursor = hit >= 0 ? Cursors.IBeam : Cursors.Default;
-        if (hovered != hit) { hovered = hit; Cursor = hit >= 0 ? Cursors.IBeam : Cursors.Default; Invalidate(); }
+        if (hovered != hit) { hovered = hit; Invalidate(); }
         if (!Capture || anchor < 0 || hit < 0 || result == null) return;
         selected.Clear();
         for (int i = Math.Min(anchor, hit); i <= Math.Max(anchor, hit); i++) selected.Add(i);

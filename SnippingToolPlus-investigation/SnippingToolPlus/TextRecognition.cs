@@ -62,7 +62,7 @@ internal static class TextRecognition
                     .Where(w => w.Bounds.Width > 0 && w.Bounds.Height > 0).ToArray();
                 var recognized = new TextRecognitionResult(string.Join(Environment.NewLine, result.Lines.Select(line => line.Text)),
                     words, engine.RecognizerLanguage.NativeName);
-                return IconTextFilter.Apply(snapshot, recognized);
+                return DurationTextCorrection.Apply(IconTextFilter.Apply(snapshot, recognized));
             }
         });
     }
