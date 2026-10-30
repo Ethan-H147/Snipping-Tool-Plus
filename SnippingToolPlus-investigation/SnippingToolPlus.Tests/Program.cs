@@ -17,13 +17,20 @@ internal static class Program
         Directory.CreateDirectory(root);
         try
         {
+            if (args.Contains("--ocr-overlay"))
+            {
+                Run("On-screen OCR stays aligned, selectable, and open until dismissed", TestScreenTextOverlay);
+                Run("Resizing, stale recognition cancellation, back, and close", TestScreenTextResize);
+                Run("Screen OCR is default; app editor is optional", TestTextCaptureThroughTray);
+                return 0;
+            }
             if (args.Contains("--ocr-ui"))
             {
                 Run("OCR word selection, editable copy text, light/dark UI, and close during recognition", TestTextActionsUi);
                 Run("Text toolbar mode and region selection", TestTextCaptureMode);
-                Run("Text capture and last-snip actions leave files and clipboard untouched", TestTextCaptureThroughTray);
                 Run("Shortcut actions and scrolling layout", TestActionButtons);
                 Run("Light/dark settings and capture toolbar layout", TestLayout);
+                Run("Text capture and last-snip actions leave files and clipboard untouched", TestTextCaptureThroughTray);
                 return 0;
             }
             if (args.Contains("--ocr-tests"))
@@ -249,6 +256,24 @@ internal static class Program
 
     private static void TestTextCaptureThroughTray()
     {
+        // A real tray app keeps its UI synchronization context through closing its last visible form.
+        Exception? failure = null;
+        using var loop = new ApplicationContext();
+        EventHandler? start = null;
+        start = (_, _) =>
+        {
+            Application.Idle -= start;
+            try { TestTextCaptureThroughTrayCore(); }
+            catch (Exception error) { failure = error; }
+            finally { loop.ExitThread(); }
+        };
+        Application.Idle += start;
+        Application.Run(loop);
+        if (failure != null) throw new Exception("Text capture integration failed", failure);
+    }
+
+    private static void TestTextCaptureThroughTrayCore()
+    {
         const System.Reflection.BindingFlags flags = System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic;
         var execute = typeof(TrayApplication).GetMethod("Execute", flags)!;
         var busy = typeof(TrayApplication).GetField("busy", flags)!;
@@ -277,24 +302,148 @@ internal static class Program
             while (DateTime.UtcNow < deadline)
             {
                 Application.DoEvents();
-                if (Application.OpenForms.OfType<TextActionsForm>().Any()) { opened = true; break; }
+                if (Application.OpenForms.OfType<ScreenTextOverlay>().Any() && !(bool)busy.GetValue(app)!) { opened = true; break; }
                 Thread.Sleep(5);
             }
             Assert(selected && opened, "Text capture did not open the text actions UI");
             Assert(!(bool)busy.GetValue(app)!, "Text recognition left capture shortcuts blocked");
             Assert(!Directory.Exists(destination), "Text mode saved an unwanted screenshot");
             Assert(GetClipboardSequenceNumber() == clipboardBefore, "Text mode changed the clipboard before Copy was requested");
-            var window = Application.OpenForms.OfType<TextActionsForm>().Single();
-            window.Close();
+            Assert(!Application.OpenForms.OfType<TextActionsForm>().Any(), "Text capture opened the app editor by default");
+            var window = Application.OpenForms.OfType<ScreenTextOverlay>().Single();
+            selected = false;
+            execute.Invoke(app, [AppAction.ExtractText]);
+            deadline = DateTime.UtcNow.AddSeconds(5);
+            while ((!Application.OpenForms.OfType<ScreenTextOverlay>().Any() || (bool)busy.GetValue(app)!) && DateTime.UtcNow < deadline)
+            { Application.DoEvents(); Thread.Sleep(5); }
+            Assert(window.IsDisposed && Application.OpenForms.OfType<ScreenTextOverlay>().Any(), "A repeated capture did not replace the existing screen OCR");
+            Assert(!Application.OpenForms.OfType<TextActionsForm>().Any(), "Repeated capture opened the app editor");
+            window = Application.OpenForms.OfType<ScreenTextOverlay>().Single();
+            Assert(!(bool)busy.GetValue(app)!, "The repeated capture action did not finish");
+            window.Options.Show(window, new Point(window.ToolbarBounds.X, window.ToolbarBounds.Bottom));
+            Application.DoEvents();
+            var openItem = (ToolStripMenuItem)window.Options.Items.Cast<ToolStripItem>().Single(i => i.Text == "Open in app");
+            openItem.PerformClick();
+            deadline = DateTime.UtcNow.AddSeconds(5);
+            while ((!window.IsDisposed || !Application.OpenForms.OfType<TextActionsForm>().Any()) && DateTime.UtcNow < deadline)
+            { Application.DoEvents(); Thread.Sleep(5); }
+            Assert(window.IsDisposed && Application.OpenForms.OfType<TextActionsForm>().Any(), "Open in app did not hand off from the screen overlay");
+            foreach (var editor in Application.OpenForms.OfType<TextActionsForm>().ToArray()) editor.Close();
             execute.Invoke(app, [AppAction.TextActions]);
             Assert(Application.OpenForms.OfType<TextActionsForm>().Any(), "Last-capture text actions did not reopen");
         }
         finally
         {
             driver.Stop();
+            foreach (var window in Application.OpenForms.OfType<ScreenTextOverlay>().ToArray()) window.Close();
             foreach (var window in Application.OpenForms.OfType<TextActionsForm>().ToArray()) window.Close();
             foreach (var overlay in Application.OpenForms.OfType<SelectionOverlay>().ToArray()) overlay.Close();
         }
+    }
+
+
+    private static void ScreenEvent(ScreenTextOverlay overlay, string method, MouseEventArgs args) =>
+        typeof(ScreenTextOverlay).GetMethod(method, System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!.Invoke(overlay, [args]);
+
+    private static void TestScreenTextOverlay()
+    {
+        Rectangle bounds = SystemInformation.VirtualScreen;
+        using var desktop = new Bitmap(bounds.Width, bounds.Height);
+        var region = new Rectangle(Math.Max(40, (bounds.Width - 1300) / 2), Math.Min(500, bounds.Height / 2), Math.Min(1300, bounds.Width - 80), 220);
+        using (var graphics = Graphics.FromImage(desktop))
+        using (var heading = new Font("Segoe UI", 23, FontStyle.Bold))
+        using (var body = new Font("Segoe UI", 18))
+        using (var card = new SolidBrush(Color.FromArgb(40, 48, 61)))
+        {
+            graphics.Clear(Color.FromArgb(24, 29, 38));
+            graphics.FillRectangle(card, 32, 38, bounds.Width - 64, 90);
+            graphics.DrawString("WORKSPACE     Library     Projects     Activity", heading, Brushes.White, 60, 60);
+            graphics.FillRectangle(card, region);
+            graphics.DrawString("PROJECT STATUS", heading, Brushes.White, region.X + 24, region.Y + 28);
+            graphics.DrawString("Build ready     Version 0.4.1     Copy text directly from this region.", body, Brushes.White, region.X + 24, region.Y + 110);
+            graphics.DrawString("Recent projects", heading, Brushes.White, 60, region.Bottom + 70);
+        }
+        using var crop = CaptureService.Crop(desktop, region);
+        var recognized = Pump(TextRecognition.RecognizeAsync(crop));
+        using var owner = new HotkeyWindow("SnippingToolPlus.Tests.ScreenText");
+        foreach (bool dark in new[] { false, true })
+        {
+            Theme.TestDark = dark;
+            var screenRegion = new Rectangle(region.X + bounds.X, region.Y + bounds.Y, region.Width, region.Height);
+            using var overlay = new ScreenTextOverlay(desktop, bounds, screenRegion, recognized);
+            overlay.Show(owner); Application.DoEvents();
+            Assert(overlay.SelectedScreenBounds == screenRegion, "OCR moved the selection");
+            Assert(overlay.Preview.RectangleToScreen(overlay.Preview.ClientRectangle) == screenRegion, "OCR pixels are not aligned with the original screen");
+            Assert(overlay.Preview.WordBounds(0) == recognized.Words[0].Bounds, "Native word coordinates were scaled");
+            Assert(!overlay.ShowInTaskbar && overlay.FormBorderStyle == FormBorderStyle.None, "Default OCR opened a normal app window");
+            var first = overlay.Preview.WordBounds(0); var second = overlay.Preview.WordBounds(1);
+            Point a = Point.Round(new PointF(first.Left + first.Width / 2, first.Top + first.Height / 2));
+            Point b = Point.Round(new PointF(second.Left + second.Width / 2, second.Top + second.Height / 2));
+            CanvasEvent(overlay.Preview, "OnMouseDown", new MouseEventArgs(MouseButtons.Left, 1, a.X, a.Y, 0));
+            CanvasEvent(overlay.Preview, "OnMouseMove", new MouseEventArgs(MouseButtons.Left, 0, b.X, b.Y, 0));
+            CanvasEvent(overlay.Preview, "OnMouseUp", new MouseEventArgs(MouseButtons.Left, 1, b.X, b.Y, 0));
+            Assert(overlay.CopyText(true) == recognized.SelectedText([0, 1]), "On-screen text selection did not copy the selected words");
+            ((ToolStripMenuItem)overlay.Options.Items.Cast<ToolStripItem>().Single(i => i.Text == "Remove line breaks")).Checked = true;
+            Assert(!overlay.CopyText(false).Contains('\n'), "On-screen copy options ignored line breaks");
+            DateTime deadline = DateTime.UtcNow.AddMilliseconds(dark ? 250 : 1300);
+            while (DateTime.UtcNow < deadline) { Application.DoEvents(); Thread.Sleep(5); }
+            Assert(overlay.Visible, "OCR result dismissed itself");
+            using var rendered = new Bitmap(overlay.Width, overlay.Height);
+            overlay.DrawToBitmap(rendered, new Rectangle(Point.Empty, rendered.Size));
+            rendered.Save(Path.Combine(root, dark ? "screen-text-dark.png" : "screen-text-light.png"), ImageFormat.Png);
+            Assert(!overlay.ToolbarBounds.IntersectsWith(region), "Toolbar covers the selected text");
+            overlay.Options.Show(overlay, new Point(overlay.ToolbarBounds.Right - 250, overlay.ToolbarBounds.Bottom + 8));
+            Application.DoEvents();
+            using (var menuImage = new Bitmap(overlay.Options.Width, overlay.Options.Height))
+            {
+                overlay.Options.DrawToBitmap(menuImage, new Rectangle(Point.Empty, menuImage.Size));
+                menuImage.Save(Path.Combine(root, dark ? "text-options-dark.png" : "text-options-light.png"), ImageFormat.Png);
+            }
+            overlay.Options.Close();
+            TextActionsForm? editor = null;
+            overlay.OpenInAppRequested += (snapshot, result) => { editor = new TextActionsForm(snapshot, result); editor.Show(); };
+            overlay.OpenEditor(); Application.DoEvents();
+            Assert(overlay.IsDisposed && editor != null && editor.Editor.Text.Contains("PROJECT"), "Optional app handoff lost the recognized text");
+            editor!.Close(); editor.Dispose();
+        }
+        Theme.TestDark = null;
+    }
+
+    private static void TestScreenTextResize()
+    {
+        Rectangle bounds = SystemInformation.VirtualScreen;
+        using var desktop = new Bitmap(bounds.Width, bounds.Height);
+        using (var graphics = Graphics.FromImage(desktop))
+        using (var font = new Font("Segoe UI", 30))
+        {
+            graphics.Clear(Color.White);
+            graphics.DrawString("ALPHA FIRST", font, Brushes.Black, 90, 300);
+            graphics.DrawString("BRAVO SECOND", font, Brushes.Black, 760, 600);
+        }
+        var initial = new Rectangle(60, 270, 520, 130);
+        using var overlay = new ScreenTextOverlay(desktop, bounds, new Rectangle(bounds.X + initial.X, bounds.Y + initial.Y, initial.Width, initial.Height));
+        overlay.Show(); Application.DoEvents();
+        int changes = 0;
+        overlay.ImageChanged += (_, _) => changes++;
+        ScreenEvent(overlay, "OnMouseDown", new MouseEventArgs(MouseButtons.Left, 1, initial.Right + 1, initial.Top + initial.Height / 2, 0));
+        ScreenEvent(overlay, "OnMouseMove", new MouseEventArgs(MouseButtons.Left, 0, initial.Right + 81, initial.Top + initial.Height / 2, 0));
+        ScreenEvent(overlay, "OnMouseUp", new MouseEventArgs(MouseButtons.Left, 1, initial.Right + 81, initial.Top + initial.Height / 2, 0));
+        Assert(overlay.SelectionBounds.Width == initial.Width + 80 && changes == 1, "Dragging the region edge did not resize and re-recognize");
+        overlay.ReplaceRegion(new Rectangle(60, 270, 520, 130));
+        overlay.ReplaceRegion(new Rectangle(720, 560, 600, 150));
+        DateTime deadline = DateTime.UtcNow.AddSeconds(20);
+        while (overlay.RecognitionResult == null && DateTime.UtcNow < deadline) { Application.DoEvents(); Thread.Sleep(5); }
+        Assert(overlay.RecognitionResult?.Text.Contains("BRAVO") == true && !overlay.RecognitionResult.Text.Contains("ALPHA"), "A stale recognition result replaced the resized region");
+        Assert(overlay.Preview.Bounds == overlay.SelectionBounds, "Resizing detached the word highlights from the selection");
+        var clipped = ScreenTextOverlay.ResizeRegion(initial, TextResizeEdges.Left | TextResizeEdges.Top, -5000, -5000, desktop.Size);
+        Assert(clipped.Left == 0 && clipped.Top == 0, "Resizing escaped the captured desktop");
+        int newRegions = 0;
+        overlay.NewCaptureRequested += () => newRegions++;
+        overlay.NewRegion();
+        Assert(overlay.IsDisposed && newRegions == 1, "Back did not dismiss OCR and request another region");
+        using var closing = new ScreenTextOverlay(desktop, bounds, new Rectangle(bounds.X + initial.X, bounds.Y + initial.Y, initial.Width, initial.Height));
+        closing.Show(); closing.Close(); closing.Dispose();
+        for (int i = 0; i < 25; i++) { Application.DoEvents(); Thread.Sleep(5); }
     }
 
     private static void TestShortcuts()

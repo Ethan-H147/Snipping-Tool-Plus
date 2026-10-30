@@ -15,6 +15,7 @@ internal sealed class TrayApplication : ApplicationContext
     private SettingsForm? settingsForm;
     private CaptureNotice? confirmation;
     private TextActionsForm? textActions;
+    private ScreenTextOverlay? screenText;
     private bool busy;
     private string? startupMessage;
     private Rectangle lastSelection = Rectangle.Empty;
@@ -173,6 +174,7 @@ internal sealed class TrayApplication : ApplicationContext
     {
         DismissConfirmation();
         textActions?.Close();
+        screenText?.Close();
         bool restoreSettings = settingsForm is { IsDisposed: false, Visible: true };
         settingsForm?.Hide();
         try
@@ -218,7 +220,7 @@ internal sealed class TrayApplication : ApplicationContext
                 if (mode == CaptureMode.Text)
                 {
                     restoreSettings = false;
-                    ShowTextActions(image);
+                    ShowScreenText(desktop, desktopBounds, screenSelection);
                     return;
                 }
                 var result = await CaptureService.DeliverAsync(image, mode, directory);
@@ -232,11 +234,23 @@ internal sealed class TrayApplication : ApplicationContext
         }
         finally { if (restoreSettings && settingsForm is { IsDisposed: false }) settingsForm.Show(); }
     }
-    private void ShowTextActions(Bitmap image)
+    private void ShowScreenText(Bitmap desktop, Rectangle desktopBounds, Rectangle screenSelection)
+    {
+        screenText?.Close();
+        var window = new ScreenTextOverlay(desktop, desktopBounds, screenSelection);
+        screenText = window;
+        window.FormClosed += (_, _) => { if (ReferenceEquals(screenText, window)) screenText = null; };
+        window.NewCaptureRequested += () => Execute(AppAction.ExtractText);
+        window.OpenInAppRequested += (image, result) => ShowTextActions(image, result);
+        window.ImageChanged += (image, bounds) => { memory.Replace(image, null); lastSelection = bounds; };
+        window.Show(hotkeys);
+    }
+    private void ShowTextActions(Bitmap image, TextRecognitionResult? result = null)
     {
         DismissConfirmation();
+        screenText?.Close();
         textActions?.Close();
-        var window = new TextActionsForm(image);
+        var window = new TextActionsForm(image, result);
         textActions = window;
         window.FormClosed += (_, _) => { if (ReferenceEquals(textActions, window)) textActions = null; };
         window.NewCaptureRequested += () => Execute(AppAction.ExtractText);
@@ -267,11 +281,11 @@ internal sealed class TrayApplication : ApplicationContext
         try { Directory.CreateDirectory(settings.SaveFolder); Process.Start(new ProcessStartInfo(settings.SaveFolder) { UseShellExecute = true }); }
         catch (Exception exception) { MessageBox.Show(exception.Message, "Snipping Tool+"); }
     }
-    protected override void ExitThreadCore() { textActions?.Close(); DismissConfirmation(); tray.Visible = false; settingsForm?.Close(); base.ExitThreadCore(); }
+    protected override void ExitThreadCore() { screenText?.Close(); textActions?.Close(); DismissConfirmation(); tray.Visible = false; settingsForm?.Close(); base.ExitThreadCore(); }
     protected override void Dispose(bool disposing)
     {
         if (disposing)
-        { Application.Idle -= FirstIdle; textActions?.Dispose(); DismissConfirmation(); settingsForm?.Dispose(); tray.Visible = false; tray.Dispose(); trayIcon.Dispose(); menu.Dispose(); hotkeys.Dispose(); memory.Dispose(); }
+        { Application.Idle -= FirstIdle; screenText?.Dispose(); textActions?.Dispose(); DismissConfirmation(); settingsForm?.Dispose(); tray.Visible = false; tray.Dispose(); trayIcon.Dispose(); menu.Dispose(); hotkeys.Dispose(); memory.Dispose(); }
         base.Dispose(disposing);
     }
 }

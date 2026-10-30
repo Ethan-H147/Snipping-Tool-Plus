@@ -30,13 +30,16 @@ To update an existing QuietSnip installation, close the old app and place the ne
 
 ## Text recognition
 
-Start your normal snip, click **Text** in the capture toolbar, and select a region. You can also use **Extract text from screen** in the tray menu, or **Text actions for last snip** to read a capture you already took. Optional shortcuts for both actions are available under Settings → Shortcuts.
+Start your normal snip, click **Text** in the capture toolbar, and select a region. The selected box stays exactly where you drew it on the frozen screen. Recognized words are highlighted inside the box; drag across them to select text, or press Ctrl+A to select everything. Ctrl+C copies the selected words, or all recognized text if nothing is selected.
 
-The text actions window highlights recognized words. Drag across words to select them, use **Copy selected** or **Copy all text**, or edit the extracted text in the panel on the right. **Remove line breaks** flattens copied text without changing the editable result. Ctrl+A and Ctrl+C work in the preview, and the text editor supports normal text selection. **New region** starts another text capture; Escape closes the window.
+A compact floating toolbar provides **Back**, **Copy all text**, **More**, and **Close**. Back starts a fresh region selection; Close or Escape dismisses OCR. Drag the box edges or corners to resize the region and recognize it again. Resizing cancels stale recognition work so older results cannot overwrite the new selection.
+
+The More menu contains **Copy selected**, **Select all**, **Remove line breaks**, and **Open in app**. The larger editable text window opens only when you choose Open in app or explicitly use **Text actions for last snip** from the tray. The normal app window is never the default result of a text capture. Optional shortcuts for fresh text capture and last-snip text actions are available under Settings → Shortcuts.
 
 Recognition uses Windows OCR locally, with an installed recognition language matching your Windows preferences where available. It sends no images to a server. Text mode does not save a PNG or replace the clipboard until you choose a copy action. Accuracy depends on text size, contrast, language, and image quality. Missing recognition languages can be added in Windows Settings → Time & language → Language & region.
 
 Word highlights ease in over 160 ms and respect Windows' animation setting. Capture shortcuts and toolbar changes remain immediate.
+
 
 ## Tests and diagnostics
 
@@ -47,6 +50,7 @@ dotnet run --project .\SnippingToolPlus-investigation\SnippingToolPlus.Tests\Sni
 dotnet run --project .\SnippingToolPlus-investigation\SnippingToolPlus.Tests\SnippingToolPlus.Tests.csproj -c Release -- .\test-results\rapid-capture --rapid-capture
 dotnet run --project .\SnippingToolPlus-investigation\SnippingToolPlus.Tests\SnippingToolPlus.Tests.csproj -c Release -- .\test-results\ocr --ocr-tests
 dotnet run --project .\SnippingToolPlus-investigation\SnippingToolPlus.Tests\SnippingToolPlus.Tests.csproj -c Release -- .\test-results\ocr-ui --ocr-ui
+dotnet run --project .\SnippingToolPlus-investigation\SnippingToolPlus.Tests\SnippingToolPlus.Tests.csproj -c Release -- .\test-results\ocr-overlay --ocr-overlay
 dotnet build .\SnippingToolPlus-investigation\SnippingToolPlus.Diagnostics\SnippingToolPlus.Diagnostics.csproj -c Release
 ```
 

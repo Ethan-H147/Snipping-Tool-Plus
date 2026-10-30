@@ -6,7 +6,13 @@ namespace SnippingToolPlus;
 
 internal sealed class TextRecognitionCanvas : Control
 {
-    private readonly Bitmap image;
+    private Bitmap image;
+    [System.ComponentModel.DesignerSerializationVisibility(System.ComponentModel.DesignerSerializationVisibility.Hidden)]
+    internal bool NativePixels { get; init; }
+    [System.ComponentModel.DesignerSerializationVisibility(System.ComponentModel.DesignerSerializationVisibility.Hidden)]
+    internal Func<Point, bool>? BeginFrameDrag { get; set; }
+    [System.ComponentModel.DesignerSerializationVisibility(System.ComponentModel.DesignerSerializationVisibility.Hidden)]
+    internal Func<Point, Cursor?>? FrameCursor { get; set; }
     private readonly HashSet<int> selected = [];
     private readonly System.Windows.Forms.Timer revealTimer = new() { Interval = 16 };
     private readonly Stopwatch revealClock = new();
@@ -34,6 +40,19 @@ internal sealed class TextRecognitionCanvas : Control
         };
     }
 
+    internal void UpdateImage(Bitmap value)
+    {
+        image = value; result = null; selected.Clear(); anchor = hovered = -1; revealTimer.Stop();
+        Invalidate(); SelectionChanged?.Invoke();
+    }
+
+    internal void SelectAllWords()
+    {
+        selected.Clear();
+        if (result != null) for (int i = 0; i < result.Words.Count; i++) selected.Add(i);
+        Invalidate(); SelectionChanged?.Invoke();
+    }
+
     public void SetResult(TextRecognitionResult value, bool animate = true)
     {
         result = value; selected.Clear(); anchor = hovered = -1;
@@ -58,6 +77,7 @@ internal sealed class TextRecognitionCanvas : Control
     {
         get
         {
+            if (NativePixels) return new RectangleF(0, 0, image.Width, image.Height);
             float availableWidth = Math.Max(1, ClientSize.Width - 32), availableHeight = Math.Max(1, ClientSize.Height - 32);
             float scale = Math.Min(availableWidth / image.Width, availableHeight / image.Height);
             return new RectangleF((Width - image.Width * scale) / 2, (Height - image.Height * scale) / 2,
@@ -79,13 +99,19 @@ internal sealed class TextRecognitionCanvas : Control
         base.OnPaint(e);
         e.Graphics.Clear(Theme.IsDark ? Color.FromArgb(24, 24, 28) : Color.FromArgb(236, 236, 242));
         e.Graphics.InterpolationMode = InterpolationMode.HighQualityBicubic;
-        e.Graphics.DrawImage(image, ImageBounds);
+        if (NativePixels) e.Graphics.DrawImageUnscaled(image, Point.Empty);
+        else e.Graphics.DrawImage(image, ImageBounds);
+        if (NativePixels)
+        {
+            using var frame = new Pen(Color.White) { DashStyle = DashStyle.Dot };
+            e.Graphics.DrawRectangle(frame, 0, 0, Math.Max(0, Width - 1), Math.Max(0, Height - 1));
+        }
         if (result == null) return;
         e.Graphics.SmoothingMode = SmoothingMode.AntiAlias;
-        using var normalFill = new SolidBrush(Color.FromArgb((int)(34 * reveal), Theme.Accent));
-        using var hoverFill = new SolidBrush(Color.FromArgb((int)(80 * reveal), Theme.Accent));
+        using var normalFill = new SolidBrush(Color.FromArgb((int)((NativePixels ? 48 : 34) * reveal), NativePixels ? Color.White : Theme.Accent));
+        using var hoverFill = new SolidBrush(Color.FromArgb((int)(80 * reveal), NativePixels ? Color.White : Theme.Accent));
         using var selectedFill = new SolidBrush(Color.FromArgb((int)(140 * reveal), Theme.Accent));
-        using var normalOutline = new Pen(Color.FromArgb((int)(110 * reveal), Theme.Accent));
+        using var normalOutline = new Pen(Color.FromArgb((int)(110 * reveal), NativePixels ? Color.White : Theme.Accent));
         using var selectedOutline = new Pen(Color.FromArgb((int)(245 * reveal), Theme.Accent), 2);
         for (int i = 0; i < result.Words.Count; i++)
         {
@@ -108,6 +134,7 @@ internal sealed class TextRecognitionCanvas : Control
     {
         base.OnMouseDown(e);
         if (e.Button != MouseButtons.Left) return;
+        if (BeginFrameDrag?.Invoke(e.Location) == true) return;
         Focus(); anchor = HitWord(e.Location);
         selected.Clear();
         if (anchor >= 0) { selected.Add(anchor); Capture = true; }
@@ -117,7 +144,10 @@ internal sealed class TextRecognitionCanvas : Control
     protected override void OnMouseMove(MouseEventArgs e)
     {
         base.OnMouseMove(e);
+        var frameCursor = FrameCursor?.Invoke(e.Location);
+        if (frameCursor != null && !Capture) { Cursor = frameCursor; return; }
         int hit = HitWord(e.Location);
+        Cursor = hit >= 0 ? Cursors.IBeam : Cursors.Default;
         if (hovered != hit) { hovered = hit; Cursor = hit >= 0 ? Cursors.IBeam : Cursors.Default; Invalidate(); }
         if (!Capture || anchor < 0 || hit < 0 || result == null) return;
         selected.Clear();
@@ -137,9 +167,7 @@ internal sealed class TextRecognitionCanvas : Control
     {
         if (e.Control && e.KeyCode == Keys.A && result != null)
         {
-            selected.Clear();
-            for (int i = 0; i < result.Words.Count; i++) selected.Add(i);
-            Invalidate(); SelectionChanged?.Invoke(); e.Handled = true; e.SuppressKeyPress = true;
+            SelectAllWords(); e.Handled = true; e.SuppressKeyPress = true;
         }
         base.OnKeyDown(e);
     }
