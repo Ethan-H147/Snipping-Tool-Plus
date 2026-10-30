@@ -97,8 +97,13 @@ internal sealed class TextRecognitionCanvas : Control
             word.Width * target.Width / image.Width, word.Height * target.Height / image.Height);
     }
 
-    private RectangleF BoundsFor(IEnumerable<int> indices) =>
-        indices.Select(WordBounds).Aggregate(RectangleF.Union);
+    private RectangleF BoundsFor(IEnumerable<int> indices)
+    {
+        var bounds = indices.Select(WordBounds).Aggregate(RectangleF.Union);
+        float scale = ImageBounds.Height / image.Height;
+        float padding = Math.Max(2 * scale, bounds.Height * .15f);
+        return RectangleF.Intersect(RectangleF.Inflate(bounds, 0, padding), ImageBounds);
+    }
 
     internal IReadOnlyList<RectangleF> LineBounds => lines.Select(BoundsFor).ToArray();
 
@@ -160,7 +165,8 @@ internal sealed class TextRecognitionCanvas : Control
 
     private GraphicsPath HighlightPath(RectangleF bounds)
     {
-        var pixels = Rectangle.Round(bounds);
+        var pixels = Rectangle.FromLTRB((int)Math.Floor(bounds.Left), (int)Math.Floor(bounds.Top),
+            (int)Math.Ceiling(bounds.Right), (int)Math.Ceiling(bounds.Bottom));
         pixels.Width = Math.Max(1, pixels.Width); pixels.Height = Math.Max(1, pixels.Height);
         if (pixels.Width < 2 || pixels.Height < 2)
         {
