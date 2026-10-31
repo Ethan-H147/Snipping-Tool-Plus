@@ -102,7 +102,7 @@ internal sealed class TextRecognitionCanvas : Control
         var bounds = indices.Select(WordBounds).Aggregate(RectangleF.Union);
         float scale = ImageBounds.Height / image.Height;
         float padding = Math.Max(2 * scale, bounds.Height * .15f);
-        return RectangleF.Intersect(RectangleF.Inflate(bounds, 0, padding), ImageBounds);
+        return RectangleF.Intersect(RectangleF.Inflate(bounds, Math.Max(2 * scale, bounds.Height * .12f), padding), ImageBounds);
     }
 
     internal IReadOnlyList<RectangleF> LineBounds => lines.Select(BoundsFor).ToArray();
